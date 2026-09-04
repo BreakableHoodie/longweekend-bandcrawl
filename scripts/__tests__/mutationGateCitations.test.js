@@ -53,15 +53,32 @@ describe("mutation-gate entries cite CLAUDE.md sections that exist", () => {
   // A scan that matches nothing reports "all clear" forever. Both counts are
   // asserted because either one silently going to zero disables the check: no
   // citations parsed, or no headings parsed.
-  it("finds the citations and headings it is meant to compare", () => {
-    expect(citations.length).toBeGreaterThanOrEqual(15);
+  it("parses one citation for EVERY mutation entry", () => {
+    // Parity, not a floor. A `>= 15` threshold passed while the table held 17
+    // entries -- so two entries could change their `invariant` wording, fall out
+    // of the regex, and have their heading references silently unchecked while
+    // this test stayed green. Counting both sides and requiring equality is the
+    // only assertion that cannot drift.
+    const entryCount = (gateSource.match(/^\s*id: "/gm) ?? []).length;
+    expect(entryCount).toBeGreaterThanOrEqual(15);
+    expect(
+      citations.length,
+      `scripts/mutation-gate.mjs has ${entryCount} entries but only ${citations.length} parsed a ` +
+        `CLAUDE.md citation. An entry whose 'invariant' string does not start with ` +
+        `CLAUDE.md '<Section>' is not being checked at all.`,
+    ).toBe(entryCount);
     expect(headings.length).toBeGreaterThanOrEqual(30);
     expect(citations).toContain("Band Announcements");
   });
 
   it.each([...new Set(citations)])("CLAUDE.md still has a '%s' section", (cited) => {
     const target = normalise(cited);
-    const found = headings.some((h) => h.includes(target));
+    // Boundary-aware, NOT includes(). A bare substring match accepts the
+    // citation anywhere in an unrelated heading: delete `## Band Announcements`,
+    // leave `## Archived Band Announcements`, and includes() still passes --
+    // verified, it returns true. The citation must BE the heading, or be its
+    // opening followed by a qualifier (`API keys` -> `API keys (#744) — ...`).
+    const found = headings.some((h) => h === target || h.startsWith(`${target} `));
     expect(
       found,
       `scripts/mutation-gate.mjs cites CLAUDE.md '${cited}', but no heading matches.\n` +
