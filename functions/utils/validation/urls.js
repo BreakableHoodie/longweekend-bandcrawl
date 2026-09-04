@@ -167,6 +167,10 @@ export function safeReflectHandleOrUrl(value) {
     return null;
   }
 
+  if (/\s/.test(text)) {
+    return null;
+  }
+
   if (/^https?:\/\//i.test(text)) {
     return normalizeHttpUrl(text);
   }

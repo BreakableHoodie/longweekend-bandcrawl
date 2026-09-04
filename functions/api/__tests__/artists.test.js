@@ -184,6 +184,29 @@ describe("Public artists directory - GET /api/artists", () => {
     expect(band.social.website).toBe("https://unsafeband.example.com/");
   });
 
+  it("reports only link fields that resolve to real links", async () => {
+    const { env, rawDb } = seedEnv();
+    const venue = insertVenue(rawDb, { name: "Main" });
+    const ev = insertEvent(rawDb, { name: "Links", slug: "links-evt" });
+    publish(rawDb, ev.id);
+    insertBand(rawDb, {
+      name: "Resolved Links",
+      event_id: ev.id,
+      venue_id: venue.id,
+      social_links: JSON.stringify({
+        // eslint-disable-next-line no-script-url -- fixture intentionally exercises an unsafe scheme
+        website: "javascript:alert(1)",
+        instagram: "bad handle",
+        bandcamp: "https://resolved.bandcamp.com",
+      }),
+    });
+
+    const res = await getArtists(env);
+    const { artists: list } = await res.json();
+    const band = list.find((artist) => artist.name === "Resolved Links");
+    expect(band.link_fields).toEqual(["bandcamp"]);
+  });
+
   it("yields social: null when social_links is absent, and never exposes the raw column", async () => {
     const { env, rawDb } = seedEnv();
     const venue = insertVenue(rawDb, { name: "Main" });
