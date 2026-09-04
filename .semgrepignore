@@ -1,0 +1,31 @@
+# Paths Semgrep should not scan.
+#
+# Semgrep's own defaults are NOT inherited once this file exists -- it replaces
+# them -- so the standard ignores are restated below before anything is added.
+# https://semgrep.dev/docs/ignoring-files-folders-code
+
+# --- Semgrep defaults, restated (see note above) ---
+node_modules/
+dist/
+build/
+coverage/
+.git/
+vendor/
+*.min.js
+
+# --- This repository ---
+
+# Wrangler's local state: a copy of the built worker plus a local D1 sqlite file.
+.wrangler/
+
+# Security-review reference material. These documents exist to SHOW vulnerable
+# patterns so a reviewer can recognise them -- `User.objects.raw(f"SELECT ...")`
+# is annotated `# SQLi` in the source. Semgrep read them as six HIGH-severity
+# SQL-injection findings, which were the loudest results in the account and
+# every one a false positive.
+#
+# This matters more than the count suggests: the findings are moving from the
+# Rule Board's Audit column (dashboard-only, no PR comments) to Comment, and
+# six confident false HIGHs on every PR is how a reviewer learns to skim the
+# actionable bucket. Same failure as the streaming-link audit in #871.
+.github/skills/**/references/
