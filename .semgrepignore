@@ -54,4 +54,10 @@ testsuite/
 # Rule Board's Audit column (dashboard-only, no PR comments) to Comment, and
 # six confident false HIGHs on every PR is how a reviewer learns to skim the
 # actionable bucket. Same failure as the streaming-link audit in #871.
-.github/skills/**/references/
+.github/skills/security-review/references/
+#
+# Scoped to THIS skill, not `**/references/`. The glob form excluded every
+# skill's references directory, present and future -- `webapp-testing` already
+# exists alongside it, so a `webapp-testing/references/` added later would have
+# been silently unscanned with nothing to notice it. The justification above is
+# specific to the security-review corpus, so the path should be too.
