@@ -56,6 +56,43 @@ describe("GET /api/bands/:name/stage-mates", () => {
     expect(body).toEqual([{ id: expect.any(Number), name: "Frequent Mate", shared_events: 2 }]);
   });
 
+  // A staged-reveal event (reveal_mode = 1) hides performances until they are
+  // individually announced. This endpoint derives co-performers by self-joining
+  // `performances` on event_id, so without a guard it reports an UNANNOUNCED
+  // artist as a stage mate of an announced one -- disclosing a booking the
+  // promoter has deliberately not revealed yet.
+  //
+  // CLAUDE.md's rule names "public read paths that return per-performance rows".
+  // This one returns aggregated co-performers, so the letter does not cover it
+  // while the reason plainly does.
+  it("does not reveal an unannounced artist on a staged-reveal event", async () => {
+    const { env, rawDb } = seedEnv();
+    const venue = insertVenue(rawDb, { name: "Reveal Venue" });
+    const event = insertEvent(rawDb, { name: "Reveal", slug: "reveal", status: "published" });
+    rawDb.prepare("UPDATE events SET reveal_mode = 1 WHERE id = ?").run(event.id);
+
+    insertBand(rawDb, { name: "Announced Act", event_id: event.id, venue_id: venue.id });
+    insertBand(rawDb, { name: "Secret Act", event_id: event.id, venue_id: venue.id });
+    // is_announced defaults to 1 (migration 0034: existing rows stay visible),
+    // so the UNANNOUNCED side is what has to be set explicitly. Setting the
+    // announced side instead is a no-op that leaves both visible -- a fixture
+    // that cannot construct the case it claims to test.
+    rawDb
+      .prepare(
+        `UPDATE performances SET is_announced = 0
+         WHERE band_profile_id = (SELECT id FROM band_profiles WHERE name = 'Secret Act')`,
+      )
+      .run();
+
+    const res = await stageMates.onRequestGet({
+      request: new Request("https://example.test/api/bands/Announced-Act/stage-mates"),
+      env,
+    });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.map((b) => b.name)).not.toContain("Secret Act");
+  });
+
   it("returns 404 for an unknown artist", async () => {
     const { env } = seedEnv();
     const res = await stageMates.onRequestGet({

@@ -57,6 +57,13 @@ export async function onRequestGet(context) {
       WHERE p1.band_profile_id = ?
         AND mate.is_active = 1
         AND ${publicEventStatusSql("e")}
+        -- Both sides of the self-join, for staged-reveal events. Without these
+        -- the query reports an UNANNOUNCED artist as a stage mate of an
+        -- announced one, disclosing a booking the promoter has not revealed.
+        -- p2 is the leak itself; p1 stops an unannounced artist's own page
+        -- being used to enumerate a bill it is not publicly on yet.
+        AND (e.reveal_mode = 0 OR p1.is_announced = 1)
+        AND (e.reveal_mode = 0 OR p2.is_announced = 1)
       GROUP BY mate.id
       ORDER BY shared_events DESC, mate.name COLLATE NOCASE ASC
       LIMIT 20
