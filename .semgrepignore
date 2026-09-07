@@ -1,0 +1,63 @@
+# Paths Semgrep should not scan.
+#
+# Semgrep's own defaults are NOT inherited once this file exists -- it replaces
+# them -- so the standard ignores are restated below before anything is added.
+# https://semgrep.dev/docs/ignoring-files-folders-code
+
+# --- Semgrep defaults, restated (see note above) ---
+#
+# This list must stay COMPLETE. An earlier version restated only six entries,
+# which silently DROPPED the rest -- measured: scan scope went from 630 files to
+# 640, re-including all ten of `frontend/src/test/` because `test/` is a default
+# this file had stopped honouring. A partial restatement does not narrow scope,
+# it WIDENS it, which is the opposite of what an ignore file looks like it does.
+#
+# Verify after any edit here by comparing `paths.scanned` with and without the
+# file; the counts must differ only by what this repository deliberately excludes
+# below.
+.git/
+.hg/
+.svn/
+_darcs/
+CVS/
+node_modules/
+vendor/
+.npm/
+.yarn/
+.venv/
+.env/
+.tox/
+_opam/
+_build/
+_cargo/
+dist/
+build/
+coverage/
+test/
+tests/
+testsuite/
+*_test.go
+*.min.js
+
+# --- This repository ---
+
+# Wrangler's local state: a copy of the built worker plus a local D1 sqlite file.
+.wrangler/
+
+# Security-review reference material. These documents exist to SHOW vulnerable
+# patterns so a reviewer can recognise them -- `User.objects.raw(f"SELECT ...")`
+# is annotated `# SQLi` in the source. Semgrep read them as six HIGH-severity
+# SQL-injection findings, which were the loudest results in the account and
+# every one a false positive.
+#
+# This matters more than the count suggests: the findings are moving from the
+# Rule Board's Audit column (dashboard-only, no PR comments) to Comment, and
+# six confident false HIGHs on every PR is how a reviewer learns to skim the
+# actionable bucket. Same failure as the streaming-link audit in #871.
+.github/skills/security-review/references/
+#
+# Scoped to THIS skill, not `**/references/`. The glob form excluded every
+# skill's references directory, present and future -- `webapp-testing` already
+# exists alongside it, so a `webapp-testing/references/` added later would have
+# been silently unscanned with nothing to notice it. The justification above is
+# specific to the security-review corpus, so the path should be too.
