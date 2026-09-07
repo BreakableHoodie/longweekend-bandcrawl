@@ -49,6 +49,117 @@ tags:
     description: Administrative maintenance endpoints
 
 paths:
+  /api/artists/shuffle:
+    get:
+      tags:
+        - Public
+      summary: Five random artists from the public roster
+      description: |
+        Returns five randomly chosen artists who have performed at a published or
+        archived event, for the roster showcase on `/artists`. Gated by
+        `PUBLIC_DATA_PUBLISH_ENABLED`.
+
+        Sends `Cache-Control: no-store` rather than the shared browse tier: a
+        300-second cache would serve every visitor the same five artists for
+        five minutes, which is a shuffle that does not shuffle.
+      responses:
+        "200":
+          description: Five artists, randomly selected per request
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+        "403":
+          description: Public data publishing is disabled
+        "500":
+          description: Server error
+
+  /api/artists/one-of-one:
+    get:
+      tags:
+        - Public
+      summary: Genres belonging to exactly one artist
+      description: |
+        Returns genres represented by a single artist across published or
+        archived events -- the "one of one" showcase. Gated by
+        `PUBLIC_DATA_PUBLISH_ENABLED`.
+      responses:
+        "200":
+          description: Genres with exactly one artist, each with that artist
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    genre:
+                      type: string
+                    id:
+                      type: integer
+                    name:
+                      type: string
+        "403":
+          description: Public data publishing is disabled
+        "500":
+          description: Server error
+
+  /api/bands/{name}/stage-mates:
+    get:
+      tags:
+        - Public
+      summary: Artists who have shared a bill with this artist
+      description: |
+        Co-performers on the same events, most-shared first, capped at 20.
+
+        The path segment is spelled `{name}` because three sibling routes
+        (`follow`, `unfollow`, `confirm-follow`) already bind that parameter and
+        Cloudflare Pages cannot host `[name]/` and `[id]/` at one level. The
+        VALUE callers send is the canonical `band_profiles.id`; a slug is also
+        accepted.
+
+        On a staged-reveal event (`reveal_mode = 1`) both sides of the join must
+        be announced, so an unannounced booking is never disclosed. Gated by
+        `PUBLIC_DATA_PUBLISH_ENABLED`.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Canonical `band_profiles.id`, or the artist's slug
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Co-performers, ordered by shared event count
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                    shared_events:
+                      type: integer
+        "400":
+          description: Band identifier missing
+        "403":
+          description: Public data publishing is disabled
+        "404":
+          description: No such artist
+        "500":
+          description: Server error
+
   /api/artists:
     get:
       tags:
