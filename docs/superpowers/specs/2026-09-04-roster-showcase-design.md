@@ -339,8 +339,12 @@ one. No migration.
   `no-store`.
 - `GET /api/artists/one-of-one` — genres belonging to exactly one artist.
   `CACHE_BROWSE`.
-- `GET /api/bands/[id]/stage-mates` — co-performers, most-shared first, keyed
-  on the canonical `band_profiles.id`. `CACHE_BROWSE`.
+- `GET /api/bands/<id>/stage-mates` — co-performers, most-shared first, keyed
+  on the canonical `band_profiles.id`. `CACHE_BROWSE`. The file lives at
+  `functions/api/bands/[name]/stage-mates.js`: three sibling routes
+  (`follow`, `unfollow`, `confirm-follow`) already bind that directory's param
+  as `params.name`, and Pages cannot host `[name]/` and `[id]/` at one level.
+  The segment's NAME is therefore `name`; the VALUE callers send is the id.
 - `/api/artists` gains RESOLVED link presence per artist.
 
 **The resolved-link response shape, stated exactly.** Every consumer -- row
@@ -375,7 +379,9 @@ names here include `$wamp A$$` and names carrying slashes and apostrophes, and
 an artist can be renamed -- the roster has already done it once (Suplex City ->
 Suplex). A display name is not an identifier.
 
-- `stage-mates` is keyed on the canonical **id** (`/api/bands/[id]/stage-mates`).
+- `stage-mates` is keyed on the canonical **id**. The path segment is spelled
+  `[name]` on disk for the routing reason above — do not read that as a licence
+  to pass a display name.
   It is a new
   endpoint with no existing callers, so there is no URL contract to preserve,
   and its caller -- the artist profile page -- already has the id loaded.
