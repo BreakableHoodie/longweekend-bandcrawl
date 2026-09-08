@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS band_profiles (
   social_links TEXT,                     -- JSON: {"bandcamp": "url", "instagram": "@handle", ...}
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-, created_by_user_id INTEGER REFERENCES users(id), origin TEXT, origin_city TEXT, origin_region TEXT, contact_email TEXT, is_active INTEGER NOT NULL DEFAULT 1, total_views INTEGER DEFAULT 0, total_social_clicks INTEGER DEFAULT 0, popularity_score REAL DEFAULT 0, photo_alt_text TEXT);
+, created_by_user_id INTEGER REFERENCES users(id), origin TEXT, origin_city TEXT, origin_region TEXT, contact_email TEXT, is_active INTEGER NOT NULL DEFAULT 1, total_views INTEGER DEFAULT 0, total_social_clicks INTEGER DEFAULT 0, popularity_score REAL DEFAULT 0, photo_alt_text TEXT, members TEXT, for_fans_of TEXT);
 
 CREATE INDEX IF NOT EXISTS idx_events_slug ON events(slug);
 

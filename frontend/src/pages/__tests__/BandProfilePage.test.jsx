@@ -307,3 +307,58 @@ describe('BandProfilePage — contact line', () => {
     expect(href).not.toBe('/contact')
   })
 })
+
+describe('BandProfilePage — members and "for fans of" (#1091)', () => {
+  const profile = extra => ({
+    id: 206,
+    name: 'Jon Creeden & the Flying Hellfish',
+    photo_url: null,
+    photo_alt_text: null,
+    description: null,
+    genre: 'Punk',
+    origin: null,
+    social: {},
+    stats: null,
+    performances: [],
+    ...extra,
+  })
+
+  it('renders both sections when set, and keeps a comma inside a role intact', async () => {
+    fetchPublicJson.mockReset()
+    fetchPublicJson.mockResolvedValue(
+      profile({
+        members: 'Bill (drums, vox)\nKieran (bass, vox)',
+        for_fans_of: 'Propagandhi, NOFX',
+      })
+    )
+    renderPage()
+
+    const members = await screen.findByRole('heading', { name: /^members$/i })
+    const section = members.closest('section')
+    // The comma inside "(drums, vox)" must survive verbatim. It is the reason
+    // this field is free text and the reason schema.org `member` is omitted:
+    // a comma split yields eight parts for four members.
+    expect(within(section).getByText(/Bill \(drums, vox\)/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /for fans of/i })).toBeInTheDocument()
+  })
+
+  it('renders NEITHER section when the fields are null', async () => {
+    fetchPublicJson.mockReset()
+    fetchPublicJson.mockResolvedValue(profile({ members: null, for_fans_of: null }))
+    renderPage()
+
+    await screen.findByRole('heading', { name: 'Jon Creeden & the Flying Hellfish' })
+    expect(screen.queryByRole('heading', { name: /^members$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /for fans of/i })).not.toBeInTheDocument()
+  })
+
+  it('treats an empty string like null — no empty section', async () => {
+    fetchPublicJson.mockReset()
+    fetchPublicJson.mockResolvedValue(profile({ members: '', for_fans_of: '' }))
+    renderPage()
+
+    await screen.findByRole('heading', { name: 'Jon Creeden & the Flying Hellfish' })
+    expect(screen.queryByRole('heading', { name: /^members$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /for fans of/i })).not.toBeInTheDocument()
+  })
+})

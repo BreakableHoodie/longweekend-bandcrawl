@@ -126,6 +126,8 @@ export async function onRequestGet(context) {
           bp.photo_url,
           bp.photo_alt_text,
           bp.social_links,
+          bp.members,
+          bp.for_fans_of,
           (SELECT COUNT(*) FROM band_follows bf WHERE bf.band_profile_id = bp.id AND bf.verified = 1) AS follower_count,
           v.name as venue_name,
           e.name as event_name
@@ -258,6 +260,8 @@ export async function onRequestGet(context) {
           bp.photo_url,
           bp.photo_alt_text,
           bp.social_links,
+          bp.members,
+          bp.for_fans_of,
           (SELECT COUNT(*) FROM band_follows bf WHERE bf.band_profile_id = bp.id AND bf.verified = 1) AS follower_count,
           (SELECT GROUP_CONCAT(DISTINCT perf.event_id) FROM performances perf WHERE perf.band_profile_id = bp.id) AS event_ids,
           next_ev.event_id AS next_event_id,
@@ -344,6 +348,8 @@ export async function onRequestPost(context) {
       is_active,
       social_links, // JSON string from frontend
       notes,
+      members,
+      for_fans_of,
     } = body;
 
     const resolvedName = sanitizeString(name || "");
@@ -353,11 +359,15 @@ export async function onRequestPost(context) {
     let resolvedPhotoUrl;
     let resolvedWebsite;
     let resolvedNotes;
+    let resolvedMembers;
+    let resolvedForFansOf;
 
     try {
       resolvedPhotoUrl = sanitizeOptionalHttpUrl(photo_url, FIELD_LIMITS.bandUrl.max, "Photo URL");
       resolvedWebsite = sanitizeOptionalHttpUrl(url, FIELD_LIMITS.bandUrl.max, "Website URL");
       resolvedNotes = sanitizeOptionalText(notes, FIELD_LIMITS.performanceNotes.max, "Notes");
+      resolvedMembers = sanitizeOptionalText(members, FIELD_LIMITS.bandMembers.max, "Members");
+      resolvedForFansOf = sanitizeOptionalText(for_fans_of, FIELD_LIMITS.bandForFansOf.max, "For fans of");
     } catch (error) {
       return new Response(JSON.stringify({ error: "Validation error", message: error.message }), {
         status: 400,
@@ -546,9 +556,11 @@ export async function onRequestPost(context) {
           is_active,
           description,
           photo_url,
-          social_links
+          social_links,
+          members,
+          for_fans_of
         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id`,
       )
         .bind(
@@ -563,6 +575,8 @@ export async function onRequestPost(context) {
           resolvedDescription,
           resolvedPhotoUrl,
           socialLinksJson || null,
+          resolvedMembers,
+          resolvedForFansOf,
         )
         .first();
 
