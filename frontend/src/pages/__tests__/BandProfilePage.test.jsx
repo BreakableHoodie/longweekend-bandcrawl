@@ -307,3 +307,77 @@ describe('BandProfilePage — contact line', () => {
     expect(href).not.toBe('/contact')
   })
 })
+
+describe('BandProfilePage — members and "for fans of" (#1091)', () => {
+  const profile = extra => ({
+    id: 206,
+    name: 'Jon Creeden & the Flying Hellfish',
+    photo_url: null,
+    photo_alt_text: null,
+    description: null,
+    genre: 'Punk',
+    origin: null,
+    social: {},
+    stats: null,
+    // The page reads `upcoming` and `past`, not `performances`. A fixture field
+    // the component never touches is a fixture that does not model the contract.
+    upcoming: [],
+    past: [],
+    ...extra,
+  })
+
+  it('renders both sections when set, and keeps a comma inside a role intact', async () => {
+    fetchPublicJson.mockReset()
+    fetchPublicJson.mockResolvedValue(
+      profile({
+        members: 'Bill (drums, vox)\nKieran (bass, vox)',
+        for_fans_of: 'Propagandhi, NOFX',
+      })
+    )
+    renderPage()
+
+    const members = await screen.findByRole('heading', { name: /^members$/i })
+    const section = members.closest('section')
+    // The comma inside "(drums, vox)" must survive verbatim. It is the reason
+    // this field is free text and the reason schema.org `member` is omitted:
+    // a comma split yields eight parts for four members.
+    // BOTH lines. Asserting only the first cannot show the second survived at
+    // all -- a renderer that dropped everything after the break would pass.
+    //
+    // What this CANNOT prove: that the break RENDERS as a line break. jsdom
+    // keeps the \n in textContent regardless of CSS, so the regex below passes
+    // with `whitespace-pre-line` removed -- verified. The class assertion after
+    // it is what catches that, and even it only proves the rule is applied, not
+    // that it paints (see CLAUDE.md on browser-verifying layout).
+    const text = section.textContent
+    expect(text).toContain('Bill (drums, vox)')
+    expect(text).toContain('Kieran (bass, vox)')
+    expect(text).toMatch(/Bill \(drums, vox\)\s*\n\s*Kieran \(bass, vox\)/)
+
+    // The CSS rule that turns the stored newline into a visible break.
+    expect(section.querySelector('.whitespace-pre-line')).not.toBeNull()
+
+    const riyl = screen.getByRole('heading', { name: /for fans of/i }).closest('section')
+    expect(within(riyl).getByText('Propagandhi, NOFX')).toBeInTheDocument()
+  })
+
+  it('renders NEITHER section when the fields are null', async () => {
+    fetchPublicJson.mockReset()
+    fetchPublicJson.mockResolvedValue(profile({ members: null, for_fans_of: null }))
+    renderPage()
+
+    await screen.findByRole('heading', { name: 'Jon Creeden & the Flying Hellfish' })
+    expect(screen.queryByRole('heading', { name: /^members$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /for fans of/i })).not.toBeInTheDocument()
+  })
+
+  it('treats an empty string like null — no empty section', async () => {
+    fetchPublicJson.mockReset()
+    fetchPublicJson.mockResolvedValue(profile({ members: '', for_fans_of: '' }))
+    renderPage()
+
+    await screen.findByRole('heading', { name: 'Jon Creeden & the Flying Hellfish' })
+    expect(screen.queryByRole('heading', { name: /^members$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /for fans of/i })).not.toBeInTheDocument()
+  })
+})

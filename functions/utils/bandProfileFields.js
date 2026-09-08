@@ -1,4 +1,10 @@
-import { FIELD_LIMITS, sanitizeBandSocialLinks, sanitizeOptionalHttpUrl, sanitizeString } from "./validation.js";
+import {
+  FIELD_LIMITS,
+  sanitizeBandSocialLinks,
+  sanitizeOptionalHttpUrl,
+  sanitizeOptionalText,
+  sanitizeString,
+} from "./validation.js";
 import { BAND_LINK_FIELD_KEYS } from "./bandLinkFields.js";
 import { normalizeBandName } from "./bandName.js";
 import { parseOrigin } from "./parseOrigin.js";
@@ -42,6 +48,8 @@ export async function prepareBandProfileFields(DB, body, bandProfileId, resolved
     photo_url,
     photo_alt_text,
     social_links,
+    members,
+    for_fans_of,
   } = body;
   const profileUpdates = [];
   const profileParams = [];
@@ -137,6 +145,18 @@ export async function prepareBandProfileFields(DB, body, bandProfileId, resolved
     profileUpdates.push("photo_alt_text = ?");
     const cleanedAlt = sanitizeString(photo_alt_text);
     profileParams.push(cleanedAlt ? cleanedAlt.slice(0, 250) : null);
+  }
+  try {
+    if (members !== undefined) {
+      profileUpdates.push("members = ?");
+      profileParams.push(sanitizeOptionalText(members, FIELD_LIMITS.bandMembers.max, "Members"));
+    }
+    if (for_fans_of !== undefined) {
+      profileUpdates.push("for_fans_of = ?");
+      profileParams.push(sanitizeOptionalText(for_fans_of, FIELD_LIMITS.bandForFansOf.max, "For fans of"));
+    }
+  } catch (error) {
+    return { error };
   }
 
   let newSocialLinks = null;

@@ -68,7 +68,7 @@ export async function onRequestGet(context) {
       bandProfile = await DB.prepare(
         `
         SELECT id, name, origin, origin_city, origin_region, social_links,
-               photo_url, photo_alt_text, description, genre
+               photo_url, photo_alt_text, description, genre, members, for_fans_of
         FROM band_profiles WHERE id = ? LIMIT 1
       `,
       )
@@ -79,7 +79,7 @@ export async function onRequestGet(context) {
       bandProfile = await DB.prepare(
         `
         SELECT id, name, origin, origin_city, origin_region, social_links,
-               photo_url, photo_alt_text, description, genre
+               photo_url, photo_alt_text, description, genre, members, for_fans_of
         FROM band_profiles
         WHERE name_normalized = ?
            OR LOWER(TRIM(name)) = LOWER(?)
@@ -236,6 +236,8 @@ export async function onRequestGet(context) {
       photo_alt_text: bandProfile.photo_alt_text,
       description: bandProfile.description,
       genre: bandProfile.genre,
+      members: bandProfile.members || null,
+      for_fans_of: bandProfile.for_fans_of || null,
       origin: formatOrigin(bandProfile),
       // Built from the canonical platform list (#779): every documented key is
       // always present, null where absent — that stable key set IS the public

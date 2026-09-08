@@ -737,6 +737,29 @@ export default function BandProfilePage() {
           </section>
         )}
 
+        {/* Members and "for fans of" (#1091). Both are FREE TEXT by design: the
+            real submissions include "Becky - Video", multi-instrument entries,
+            and one act whose lineup is "TBD" — shapes a structured model breaks
+            on. `whitespace-pre-line` preserves the line breaks an artist typed,
+            since members arrive as a list. */}
+        {profile.members && (
+          <section aria-labelledby="members-heading" className="mb-6">
+            <h2 id="members-heading" className="mb-2 text-lg font-semibold text-text-primary">
+              Members
+            </h2>
+            <p className="whitespace-pre-line text-sm text-text-secondary">{profile.members}</p>
+          </section>
+        )}
+
+        {profile.for_fans_of && (
+          <section aria-labelledby="for-fans-of-heading" className="mb-6">
+            <h2 id="for-fans-of-heading" className="mb-2 text-lg font-semibold text-text-primary">
+              For fans of
+            </h2>
+            <p className="whitespace-pre-line text-sm text-text-secondary">{profile.for_fans_of}</p>
+          </section>
+        )}
+
         {/* Contact line — lets an artist correct their own page.
             The link carries the numeric id so /contact can identify the profile. */}
         <p className="mb-6 text-sm text-text-tertiary">

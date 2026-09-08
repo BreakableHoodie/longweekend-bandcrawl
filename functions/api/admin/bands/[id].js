@@ -119,6 +119,8 @@ export async function onRequestPut(context) {
       photo_url,
       photo_alt_text,
       social_links,
+      members,
+      for_fans_of,
       notes,
     } = body;
 
@@ -157,7 +159,7 @@ export async function onRequestPut(context) {
       // Check if performance exists
       performance = await DB.prepare(
         `
-        SELECT p.*, bp.name, bp.social_links, bp.id as band_profile_id
+        SELECT p.*, bp.name, bp.social_links, bp.members, bp.for_fans_of, bp.id as band_profile_id
         FROM performances p
         JOIN band_profiles bp ON p.band_profile_id = bp.id
         WHERE p.id = ?
@@ -371,7 +373,9 @@ export async function onRequestPut(context) {
       is_active !== undefined ||
       photo_url !== undefined ||
       photo_alt_text !== undefined ||
-      social_links !== undefined
+      social_links !== undefined ||
+      members !== undefined ||
+      for_fans_of !== undefined
     ) {
       const { profileStatement, error: profileFieldsError } = await prepareBandProfileFields(
         DB,
@@ -449,7 +453,9 @@ export async function onRequestPut(context) {
           bp.origin_city,
           bp.origin_region,
           bp.contact_email,
-          bp.is_active
+          bp.is_active,
+          bp.members,
+          bp.for_fans_of
         FROM performances p
         JOIN band_profiles bp ON p.band_profile_id = bp.id
         WHERE p.id = ?

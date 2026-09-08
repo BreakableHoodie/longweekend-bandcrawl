@@ -109,6 +109,16 @@ export async function onRequest(context) {
   let band;
   try {
     band = await env.DB.prepare(
+      // NOTE: `members` is deliberately NOT selected. schema.org's MusicGroup.member
+      // expects Person or Organization objects, and the stored value is free text
+      // by design (#1091) -- because the real submissions include "Becky - Video",
+      // multi-instrument entries, and one act whose lineup is "TBD".
+      //
+      // That shape resists parsing: a comma split on
+      //   "Bill (drums, vox), Kieran (bass, vox), Sean (guitar, vox), Jon (vox, guitar)"
+      // yields EIGHT parts for FOUR members, emitting names like "vox)". Wrong
+      // structured data is worse than none, so `member` is omitted until it earns
+      // a real parser with its own tests.
       `SELECT name, genre, origin, origin_city, origin_region, description, photo_url, social_links
        FROM band_profiles WHERE id = ?`,
     )

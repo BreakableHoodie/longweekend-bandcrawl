@@ -31,6 +31,8 @@ export const FIELD_LIMITS = {
   bandOriginRegion: { min: 0, max: 100 },
   bandGenre: { min: 0, max: 100 },
   bandDescription: { min: 0, max: 5000 },
+  bandMembers: { min: 0, max: 2000 },
+  bandForFansOf: { min: 0, max: 500 },
   bandUrl: { min: 0, max: 500 },
   socialHandle: { min: 0, max: 100 },
   bandContactEmail: { min: 0, max: 255 },
