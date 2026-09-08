@@ -62,9 +62,21 @@ paths:
         Sends `Cache-Control: no-store` rather than the shared browse tier: a
         300-second cache would serve every visitor the same five artists for
         five minutes, which is a shuffle that does not shuffle.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: |
+            How many artists to return. Clamped to 1-20; a value outside that
+            range is clamped rather than rejected. A non-integer is a 400.
+          schema:
+            type: integer
+            default: 5
+            minimum: 1
+            maximum: 20
       responses:
         "200":
-          description: Five artists, randomly selected per request
+          description: Randomly selected artists
           content:
             application/json:
               schema:
@@ -76,6 +88,23 @@ paths:
                       type: integer
                     name:
                       type: string
+                    slug:
+                      type: string
+                    genre:
+                      type: string
+                      nullable: true
+                    origin_city:
+                      type: string
+                      nullable: true
+                    origin_region:
+                      type: string
+                      nullable: true
+                    listen_url:
+                      type: string
+                      nullable: true
+                      description: First of bandcamp, spotify or apple_music, else null
+        "400":
+          description: '`limit` was not an integer'
         "403":
           description: Public data publishing is disabled
         "500":
@@ -92,7 +121,7 @@ paths:
         `PUBLIC_DATA_PUBLISH_ENABLED`.
       responses:
         "200":
-          description: Genres with exactly one artist, each with that artist
+          description: Genre tags held by exactly one artist, with that artist
           content:
             application/json:
               schema:
@@ -100,12 +129,22 @@ paths:
                 items:
                   type: object
                   properties:
-                    genre:
+                    tag:
                       type: string
-                    id:
-                      type: integer
-                    name:
-                      type: string
+                      description: The genre tag, in its original casing
+                    artist:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        name:
+                          type: string
+                        genre:
+                          type: string
+                          nullable: true
+                        origin_city:
+                          type: string
+                          nullable: true
         "403":
           description: Public data publishing is disabled
         "500":

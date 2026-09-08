@@ -22,8 +22,24 @@ export async function onRequestGet(context) {
 
     let bandId = null;
     let searchName = null;
-    if (!isNaN(searchParam) && parseInt(searchParam) > 0) {
-      bandId = parseInt(searchParam);
+    // Canonical positive decimal only. `!isNaN(x) && parseInt(x) > 0` is the
+    // idiom the sibling band routes use, and it accepts forms that then resolve
+    // to a DIFFERENT record than the URL names:
+    //
+    //   "1.9"  -> parseInt 1   (band 1, from a path that is not band 1)
+    //   "1e2"  -> parseInt 1   (band 1, though Number("1e2") is 100)
+    //   "0x10" -> parseInt 16  (band 16, from a hex string)
+    //
+    // Two URLs resolving to one record is a canonical-URL problem in a repo
+    // that cares about them (#983), not merely untidy. `validateId()` is
+    // stricter but still accepts "1e2" and "0x10" through Number(), so it does
+    // not close this either.
+    //
+    // `api/bands/[name].js` and `api/bands/stats/[name].js` share the defect and
+    // are deliberately NOT touched here -- swept and filed rather than widened
+    // into this PR.
+    if (/^[1-9]\d*$/.test(searchParam) && Number.isSafeInteger(Number(searchParam))) {
+      bandId = Number(searchParam);
     } else {
       searchName = searchParam.replace(/-/g, " ").trim();
     }

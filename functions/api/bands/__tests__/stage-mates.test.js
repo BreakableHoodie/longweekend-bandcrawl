@@ -93,6 +93,73 @@ describe("GET /api/bands/:name/stage-mates", () => {
     expect(body.map((b) => b.name)).not.toContain("Secret Act");
   });
 
+  // The p1 half of the reveal guard. Without a case here only p2 is covered,
+  // and the p1 clause could be deleted with the suite still green -- the
+  // vacuous shape this repo keeps finding.
+  it("returns nothing for an artist whose own set is unannounced", async () => {
+    const { env, rawDb } = seedEnv();
+    const venue = insertVenue(rawDb, { name: "Reveal Venue 2" });
+    const event = insertEvent(rawDb, { name: "Reveal2", slug: "reveal2", status: "published" });
+    rawDb.prepare("UPDATE events SET reveal_mode = 1 WHERE id = ?").run(event.id);
+    insertBand(rawDb, { name: "Hidden Act", event_id: event.id, venue_id: venue.id });
+    insertBand(rawDb, { name: "Public Act", event_id: event.id, venue_id: venue.id });
+    rawDb
+      .prepare(
+        `UPDATE performances SET is_announced = 0
+         WHERE band_profile_id = (SELECT id FROM band_profiles WHERE name = 'Hidden Act')`,
+      )
+      .run();
+
+    const res = await stageMates.onRequestGet({
+      request: new Request("https://example.test/api/bands/Hidden-Act/stage-mates"),
+      env,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  // "1.9", "1e2" and "0x10" all satisfied the old `!isNaN && parseInt > 0`
+  // idiom and resolved to bands 1, 1 and 16 respectively -- a path resolving to
+  // a record it does not name. They must now fall through to the slug branch
+  // and 404 rather than silently serving someone else's data.
+  it.each(["1.9", "1e2"])("does not resolve %s to a numeric id", async (segment) => {
+    const { env, rawDb } = seedEnv();
+    const venue = insertVenue(rawDb, { name: "Numeric Venue" });
+    const ev = insertEvent(rawDb, { name: "Num", slug: "num", status: "published" });
+    insertBand(rawDb, { name: "First Band", event_id: ev.id, venue_id: venue.id });
+
+    const res = await stageMates.onRequestGet({
+      request: new Request(`https://example.test/api/bands/${segment}/stage-mates`),
+      env,
+    });
+    expect(res.status).toBe(404);
+  });
+
+  // Hex needs its own case, built from a REAL id. A literal like "0x10" 404s
+  // under both the old and the new parser -- old: parseInt gives 16 and band 16
+  // does not exist; new: it falls through to the slug branch. Same status for
+  // opposite reasons, so it proves nothing.
+  //
+  // Deriving the hex from an id that DOES exist is what makes it discriminating:
+  // the old idiom resolves it and answers 200, the new one 404s.
+  it("does not resolve a hex form of a real id", async () => {
+    const { env, rawDb } = seedEnv();
+    const venue = insertVenue(rawDb, { name: "Hex Venue" });
+    const ev = insertEvent(rawDb, { name: "Hex", slug: "hex", status: "published" });
+    const anchor = insertBand(rawDb, { name: "Hex Anchor", event_id: ev.id, venue_id: venue.id });
+    insertBand(rawDb, { name: "Hex Mate", event_id: ev.id, venue_id: venue.id });
+
+    const hex = `0x${anchor.band_profile_id.toString(16)}`;
+    expect(Number.parseInt(hex, 10)).toBe(0); // parseInt base-10 stops at "x"
+    expect(Number(hex)).toBe(anchor.band_profile_id); // but Number() resolves it
+
+    const res = await stageMates.onRequestGet({
+      request: new Request(`https://example.test/api/bands/${hex}/stage-mates`),
+      env,
+    });
+    expect(res.status).toBe(404);
+  });
+
   it("returns 404 for an unknown artist", async () => {
     const { env } = seedEnv();
     const res = await stageMates.onRequestGet({
