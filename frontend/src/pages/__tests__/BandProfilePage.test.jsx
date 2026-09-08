@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import { HelmetProvider } from 'react-helmet-async'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -213,5 +213,97 @@ describe('BandProfilePage — per-set performance_date, notes, and Day N label (
     // "(Day N)" suffix at all.
     expect(screen.getByText('Sat, Sep 5')).toBeInTheDocument()
     expect(screen.queryByText(/\(Day \d+\)/)).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Stage-mates (#1098)
+// ---------------------------------------------------------------------------
+
+// Minimal band payload reused across stage-mates tests.
+const BASE_BAND = {
+  id: 206,
+  name: 'ALL',
+  photo_url: null,
+  photo_alt_text: null,
+  description: null,
+  genre: null,
+  origin: null,
+  social: {},
+  stats: null,
+  upcoming: [],
+  past: [],
+}
+
+describe('BandProfilePage — stage-mates', () => {
+  it('renders stage-mates with names and shared counts', async () => {
+    fetchPublicJson.mockImplementation(url => {
+      if (url.includes('/stage-mates')) {
+        return Promise.resolve([
+          { id: 10, name: 'Stage Mate One', shared_events: 3 },
+          { id: 11, name: 'Stage Mate Two', shared_events: 1 },
+        ])
+      }
+      return Promise.resolve(BASE_BAND)
+    })
+
+    renderPage('206')
+    await screen.findByRole('heading', { level: 1, name: 'ALL' })
+
+    const section = await screen.findByRole('region', { name: /shared a bill with/i })
+    expect(within(section).getByRole('link', { name: /stage mate one/i })).toBeInTheDocument()
+    expect(within(section).getByRole('link', { name: /stage mate two/i })).toBeInTheDocument()
+
+    // Shared count is visible in the chip text
+    expect(within(section).getByText(/×3/)).toBeInTheDocument()
+    expect(within(section).getByText(/×1/)).toBeInTheDocument()
+  })
+
+  it('renders nothing when stage-mates list is empty', async () => {
+    fetchPublicJson.mockImplementation(url => {
+      if (url.includes('/stage-mates')) return Promise.resolve([])
+      return Promise.resolve(BASE_BAND)
+    })
+
+    renderPage('206')
+    await screen.findByRole('heading', { level: 1, name: 'ALL' })
+
+    // No section, no empty-state box
+    expect(screen.queryByRole('region', { name: /shared a bill with/i })).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Contact line (#1098)
+// ---------------------------------------------------------------------------
+describe('BandProfilePage — contact line', () => {
+  it('renders a contact link containing the artist numeric id', async () => {
+    fetchPublicJson.mockImplementation(url => {
+      if (url.includes('/stage-mates')) return Promise.resolve([])
+      return Promise.resolve({ ...BASE_BAND, id: 206 })
+    })
+
+    renderPage('206')
+    await screen.findByRole('heading', { level: 1, name: 'ALL' })
+
+    // The link must navigate to /contact with the artist id as a query param.
+    const contactLink = screen.getByRole('link', { name: /tell us if anything is wrong/i })
+    expect(contactLink).toHaveAttribute('href', '/contact?artist=206')
+  })
+
+  it('contact link includes artist id, not just a bare /contact', async () => {
+    fetchPublicJson.mockImplementation(url => {
+      if (url.includes('/stage-mates')) return Promise.resolve([])
+      return Promise.resolve({ ...BASE_BAND, id: 99 })
+    })
+
+    renderPage('99')
+    await screen.findByRole('heading', { level: 1, name: 'ALL' })
+
+    const contactLink = screen.getByRole('link', { name: /tell us if anything is wrong/i })
+    const href = contactLink.getAttribute('href')
+    // Must contain artist=99 — a bare /contact cannot identify the profile.
+    expect(href).toContain('artist=99')
+    expect(href).not.toBe('/contact')
   })
 })

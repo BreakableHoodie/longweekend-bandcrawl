@@ -107,6 +107,7 @@ export default function BandProfilePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [scheduleSelections, setScheduleSelections] = useState({}) // { eventSlug: Set of bandIds }
+  const [stageMates, setStageMates] = useState([])
   const [followEmail, setFollowEmail] = useState('')
   const [followStatus, setFollowStatus] = useState('idle') // 'idle' | 'loading' | 'success' | 'error'
   const [followError, setFollowError] = useState('')
@@ -224,6 +225,30 @@ export default function BandProfilePage() {
   useEffect(() => {
     if (profile?.id) {
       trackArtistView(profile.id)
+    }
+  }, [profile?.id])
+
+  // Fetch stage-mates whenever the resolved numeric profile id changes.
+  // Passes the id (not the slug) per the spec: the path segment is spelled
+  // [name] on disk for routing reasons, but callers send the numeric id.
+  useEffect(() => {
+    // Clear FIRST. Without this, navigating from profile A to profile B renders
+    // A's stage mates under B's name until B's request resolves — and if B's
+    // request fails or returns a non-array, A's list stays visible indefinitely.
+    setStageMates([])
+    if (!profile?.id) return
+    // fetchPublicJson retries a failed GET after 600ms, so an in-flight request
+    // can fire again after this effect is disposed. The signal stops that.
+    const controller = new AbortController()
+    fetchPublicJson(`/api/bands/${profile.id}/stage-mates`, { signal: controller.signal }, 'Failed to load stage mates')
+      .then(data => {
+        if (!controller.signal.aborted && Array.isArray(data)) setStageMates(data)
+      })
+      .catch(() => {
+        // Silent — stage-mates is ambient content; an error leaves the section absent.
+      })
+    return () => {
+      controller.abort()
     }
   }, [profile?.id])
 
@@ -685,6 +710,45 @@ export default function BandProfilePage() {
           </div>
           {followStatus === 'error' && <p className="mt-2 text-xs text-error-400">{followError}</p>}
         </div>
+
+        {/* Stage-mates — who this artist has shared a bill with, most-shared first.
+            Renders nothing when the list is empty (spec: no empty-state box). */}
+        {stageMates.length > 0 && (
+          <section aria-label="Shared a bill with" className="mb-6 rounded-xl border border-border bg-surface p-5">
+            <h2 className="mb-3 font-display text-base font-bold text-text-primary">Shared a bill with</h2>
+            <ul className="flex flex-wrap gap-2">
+              {stageMates.map(mate => (
+                <li key={mate.id}>
+                  <Link
+                    to={`/band/${mate.id}`}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-border bg-gradient-card px-3 py-1.5 text-sm text-text-secondary transition hover:border-accent-400/50 hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent-400"
+                  >
+                    {mate.name}
+                    <span
+                      aria-label={`${mate.shared_events} shared ${mate.shared_events === 1 ? 'event' : 'events'}`}
+                      className="tabular-nums text-xs text-text-tertiary"
+                    >
+                      ×{mate.shared_events}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {/* Contact line — lets an artist correct their own page.
+            The link carries the numeric id so /contact can identify the profile. */}
+        <p className="mb-6 text-sm text-text-tertiary">
+          <strong className="font-semibold text-text-secondary">Is this your band?</strong>{' '}
+          <Link
+            to={`/contact?artist=${profile.id}`}
+            className="text-accent-400 underline underline-offset-2 hover:text-accent-300 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent-400"
+          >
+            Tell us if anything is wrong
+          </Link>{' '}
+          — genre, hometown, links.
+        </p>
 
         {/* Stats/Facts (left) + Shows (right). When a band has no stats, the shows
             column spans full width so the empty state stays aligned with the page. */}
