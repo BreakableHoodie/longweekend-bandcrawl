@@ -26,9 +26,10 @@ import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import semver from "semver";
 
-const repoRoot = resolve(import.meta.dirname, "..", "..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 function trackedManifests() {
   const out = execFileSync("git", ["ls-files", "*package.json"], {

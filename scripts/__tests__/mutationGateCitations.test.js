@@ -22,9 +22,10 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const repoRoot = resolve(import.meta.dirname, "..", "..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const gateSource = readFileSync(join(repoRoot, "scripts", "mutation-gate.mjs"), "utf8");
 const claudeMd = readFileSync(join(repoRoot, "CLAUDE.md"), "utf8");
 
