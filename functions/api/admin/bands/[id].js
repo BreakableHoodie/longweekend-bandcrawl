@@ -453,7 +453,9 @@ export async function onRequestPut(context) {
           bp.origin_city,
           bp.origin_region,
           bp.contact_email,
-          bp.is_active
+          bp.is_active,
+          bp.members,
+          bp.for_fans_of
         FROM performances p
         JOIN band_profiles bp ON p.band_profile_id = bp.id
         WHERE p.id = ?

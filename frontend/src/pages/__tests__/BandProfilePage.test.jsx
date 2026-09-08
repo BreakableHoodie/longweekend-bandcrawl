@@ -319,7 +319,10 @@ describe('BandProfilePage — members and "for fans of" (#1091)', () => {
     origin: null,
     social: {},
     stats: null,
-    performances: [],
+    // The page reads `upcoming` and `past`, not `performances`. A fixture field
+    // the component never touches is a fixture that does not model the contract.
+    upcoming: [],
+    past: [],
     ...extra,
   })
 
@@ -338,8 +341,24 @@ describe('BandProfilePage — members and "for fans of" (#1091)', () => {
     // The comma inside "(drums, vox)" must survive verbatim. It is the reason
     // this field is free text and the reason schema.org `member` is omitted:
     // a comma split yields eight parts for four members.
-    expect(within(section).getByText(/Bill \(drums, vox\)/)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /for fans of/i })).toBeInTheDocument()
+    // BOTH lines. Asserting only the first cannot show the second survived at
+    // all -- a renderer that dropped everything after the break would pass.
+    //
+    // What this CANNOT prove: that the break RENDERS as a line break. jsdom
+    // keeps the \n in textContent regardless of CSS, so the regex below passes
+    // with `whitespace-pre-line` removed -- verified. The class assertion after
+    // it is what catches that, and even it only proves the rule is applied, not
+    // that it paints (see CLAUDE.md on browser-verifying layout).
+    const text = section.textContent
+    expect(text).toContain('Bill (drums, vox)')
+    expect(text).toContain('Kieran (bass, vox)')
+    expect(text).toMatch(/Bill \(drums, vox\)\s*\n\s*Kieran \(bass, vox\)/)
+
+    // The CSS rule that turns the stored newline into a visible break.
+    expect(section.querySelector('.whitespace-pre-line')).not.toBeNull()
+
+    const riyl = screen.getByRole('heading', { name: /for fans of/i }).closest('section')
+    expect(within(riyl).getByText('Propagandhi, NOFX')).toBeInTheDocument()
   })
 
   it('renders NEITHER section when the fields are null', async () => {
