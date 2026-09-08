@@ -96,8 +96,12 @@ describe("artist showcase endpoints", () => {
 
     // Weights are the spec's 6/3/1. The unseen bucket was 9 in code while the
     // merged spec said 6, in prose, twice -- they shipped disagreeing.
-    expect(source).toMatch(/COALESCE\(total_views, 0\) = 0 THEN 6/);
-    expect(source).toMatch(/total_views BETWEEN 1 AND 9 THEN 3/);
+    // All THREE branches, matched as ONE expression. Asserting the branches
+    // separately leaves the last one unpinned: `ELSE 2` changes every selection
+    // probability and passed the earlier version of this guard, verified.
+    expect(source, "the weight CASE must be exactly 6 / 3 / 1 -- the spec's stated ratio, all three branches").toMatch(
+      /WHEN COALESCE\(total_views, 0\) = 0 THEN 6\s*\n\s*WHEN total_views BETWEEN 1 AND 9 THEN 3\s*\n\s*ELSE 1\s*\n\s*END/,
+    );
   });
 
   it("returns only case-insensitive single-artist genre tags split by commas and slashes", async () => {
