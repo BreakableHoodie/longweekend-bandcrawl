@@ -49,6 +49,158 @@ tags:
     description: Administrative maintenance endpoints
 
 paths:
+  /api/artists/shuffle:
+    get:
+      tags:
+        - Public
+      summary: Five random artists from the public roster
+      description: |
+        Returns five randomly chosen artists who have performed at a published or
+        archived event, for the roster showcase on `/artists`. Gated by
+        `PUBLIC_DATA_PUBLISH_ENABLED`.
+
+        Sends `Cache-Control: no-store` rather than the shared browse tier: a
+        300-second cache would serve every visitor the same five artists for
+        five minutes, which is a shuffle that does not shuffle.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: |
+            How many artists to return. Clamped to 1-20; a value outside that
+            range is clamped rather than rejected. A non-integer is a 400.
+          schema:
+            type: integer
+            default: 5
+            minimum: 1
+            maximum: 20
+      responses:
+        "200":
+          description: Randomly selected artists
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 20
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                    slug:
+                      type: string
+                    genre:
+                      type: string
+                      nullable: true
+                    origin_city:
+                      type: string
+                      nullable: true
+                    origin_region:
+                      type: string
+                      nullable: true
+                    listen_url:
+                      type: string
+                      nullable: true
+                      description: First of bandcamp, spotify or apple_music, else null
+        "400":
+          description: '`limit` was not an integer'
+        "503":
+          $ref: "#/components/responses/PublicDataUnavailable"
+        "500":
+          description: Server error
+
+  /api/artists/one-of-one:
+    get:
+      tags:
+        - Public
+      summary: Genres belonging to exactly one artist
+      description: |
+        Returns genres represented by a single artist across published or
+        archived events -- the "one of one" showcase. Gated by
+        `PUBLIC_DATA_PUBLISH_ENABLED`.
+      responses:
+        "200":
+          description: Genre tags held by exactly one artist, with that artist
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    tag:
+                      type: string
+                      description: The genre tag, in its original casing
+                    artist:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        name:
+                          type: string
+                        genre:
+                          type: string
+                          nullable: true
+                        origin_city:
+                          type: string
+                          nullable: true
+        "503":
+          $ref: "#/components/responses/PublicDataUnavailable"
+        "500":
+          description: Server error
+
+  /api/bands/{name}/stage-mates:
+    get:
+      tags:
+        - Public
+      summary: Artists who have shared a bill with this artist
+      description: |
+        Co-performers on the same events, most-shared first, capped at 20.
+
+        The path segment is spelled `{name}` because three sibling routes
+        (`follow`, `unfollow`, `confirm-follow`) already bind that parameter and
+        Cloudflare Pages cannot host `[name]/` and `[id]/` at one level. The
+        VALUE callers send is the canonical `band_profiles.id`; a slug is also
+        accepted.
+
+        On a staged-reveal event (`reveal_mode = 1`) both sides of the join must
+        be announced, so an unannounced booking is never disclosed. Gated by
+        `PUBLIC_DATA_PUBLISH_ENABLED`.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Canonical `band_profiles.id`, or the artist's slug
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Co-performers, ordered by shared event count
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 20
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                    shared_events:
+                      type: integer
+        "400":
+          description: Band identifier missing
+        "503":
+          $ref: "#/components/responses/PublicDataUnavailable"
+        "404":
+          description: No such artist
+        "500":
+          description: Server error
+
   /api/artists:
     get:
       tags:

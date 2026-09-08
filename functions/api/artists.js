@@ -10,6 +10,7 @@ import { CACHE_BROWSE } from "../utils/cacheHeaders.js";
 import { safeReflectSocialLinks } from "../utils/validation.js";
 import { sortableName } from "../utils/sortableName.js";
 import { publicEventStatusSql } from "../utils/eventVisibility.js";
+import { BAND_LINK_FIELD_KEYS } from "../utils/bandLinkFields.js";
 
 const DEFAULT_LIMIT = 24;
 const MAX_LIMIT = 60;
@@ -96,6 +97,12 @@ export async function onRequestGet(context) {
       // safeExternalHref before rendering any href. Absent column → null so
       // profiles with no links don't grow an empty object.
       social: row.social_links ? safeReflectSocialLinks(row.social_links) : null,
+      link_fields: row.social_links
+        ? BAND_LINK_FIELD_KEYS.filter((key) => {
+            const social = safeReflectSocialLinks(row.social_links);
+            return social[key] !== null && social[key] !== undefined && social[key] !== "";
+          })
+        : [],
     }));
 
     return new Response(JSON.stringify({ artists, hasMore }), {
