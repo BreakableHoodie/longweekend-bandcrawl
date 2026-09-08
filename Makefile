@@ -174,7 +174,7 @@ gate: format format-check lint-all test build ## FULL pre-commit gate — run be
 hooks: ## Install the tracked git hooks (pre-push CodeRabbit rate-limit guard)
 	@git config core.hooksPath .githooks
 	@echo "core.hooksPath -> .githooks"
-	@echo "pre-push now guards the CodeRabbit rolling-hour limit (5 reviews/hour)."
+	@echo "pre-push now guards the CodeRabbit rolling-hour limit ($$(sed -n 's/^LIMIT=\([0-9][0-9]*\)$$/\1/p' .githooks/pre-push) review(s)/hour)."
 	@echo "Override for a genuine emergency: CODERABBIT_OVERAGE=1 git push"
 
 review: ## AI code review of this branch vs origin/main — run BEFORE opening a PR
