@@ -852,15 +852,30 @@ behaviour still has a test that fails when the behaviour breaks, and a code
 change that alters or renames a guarded line fails the build as pattern drift.
 
 It does **not** read this file. Each entry carries the CLAUDE.md section name as
-a plain string, for whoever reads a failure — it is a pointer, not a checked
-cross-reference. So **editing or deleting the prose here leaves the gate green**,
-and nothing detects a doc that has drifted away from a still-passing invariant.
-An earlier draft of this section claimed otherwise ("the prose cannot silently
-drift without a red build"), which was exactly the confidently-wrong
-documentation this whole file exists to prevent; it was caught in review, not by
-a test. Validating that every cited section still exists is tractable and is
-tracked separately — until it lands, do not read a green gate as evidence that
-the words above are current.
+a plain string, for whoever reads a failure. An earlier draft of this section
+claimed the gate cross-checked that name ("the prose cannot silently drift
+without a red build"), which was exactly the confidently-wrong documentation
+this whole file exists to prevent; it was caught in review, not by a test.
+
+**The pointer half is now checked**, by
+`scripts/__tests__/mutationGateCitations.test.js`: every `CLAUDE.md '<Section>'`
+an entry cites must still match a heading here, so renaming or deleting a cited
+section fails the build instead of leaving a dangling reference. The two gates
+are complementary and neither implies the other — verified by renaming
+`## Band Announcements` and watching `make mutation-gate` stay **green** while
+the citation test went red.
+
+Comparison strips backticks and collapses whitespace, which is load-bearing
+rather than cosmetic: the live heading is ``Public event visibility is `status`,
+never `is_published` (#800) — …`` while the citation is plain text, and a naive
+substring match reports that as dangling. It did, on the first run — a false
+positive caught by reading the heading instead of trusting the matcher.
+
+**What is still unchecked is the prose itself.** The guard proves a heading by
+that name exists, never that the words underneath still describe the invariant.
+Editing the body of a correctly-named section leaves both gates green, so a
+green build is still not evidence that this file's *content* is current — only
+that its cross-references resolve.
 
 Three properties are load-bearing, each learned from a failure recorded in this
 file:
