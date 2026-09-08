@@ -39,8 +39,15 @@ export async function onRequestGet(context) {
   }
 
   try {
-    // Lower random scores are favoured, with unseen artists receiving the
-    // strongest weight without partitioning known artists out of the draw.
+    // Weighted sampling WITHOUT replacement, via Efraimidis-Spirakis: give
+    // each row the key U^(1/w) for U uniform on [0,1], take the largest.
+    // That is exact -- P(drawn) is proportional to w.
+    //
+    // `ORDER BY RANDOM() / weight` looks equivalent and is not. Measured over
+    // 300k single draws at weights 6/3/1 it selects 69.3 / 23.7 / 7.0, where
+    // proportionality needs 60 / 30 / 10 -- an effective ratio near 10:1 from
+    // a stated 6:1, so the number in the code and the ratio a reader computes
+    // from it disagree. The same simulation on U^(1/w) returns 60/30/10.
     const result = await env.DB.prepare(
       `
       SELECT bp.id, bp.name, bp.genre, bp.origin_city, bp.origin_region, bp.social_links
@@ -50,11 +57,21 @@ export async function onRequestGet(context) {
       WHERE bp.is_active = 1
         AND ${publicEventStatusSql("e")}
       GROUP BY bp.id
-      ORDER BY ABS(RANDOM()) * 1.0 / CASE
-        WHEN COALESCE(total_views, 0) = 0 THEN 9
-        WHEN total_views BETWEEN 1 AND 9 THEN 3
-        ELSE 1
-      END
+      -- 6 / 3 / 1, matching the spec's stated "six times less likely". The
+      -- code used 9 for the unseen bucket while the merged spec said 6, in
+      -- prose, twice. They shipped disagreeing.
+      --
+      -- RANDOM() is a signed 64-bit int, so ABS(...)/9223372036854775807.0
+      -- is the uniform [0,1] the algorithm needs. A row drawing exactly 0
+      -- sorts last, which is correct and needs no guard -- unlike ln(0).
+      ORDER BY POW(
+        ABS(RANDOM()) / 9223372036854775807.0,
+        1.0 / CASE
+          WHEN COALESCE(total_views, 0) = 0 THEN 6
+          WHEN total_views BETWEEN 1 AND 9 THEN 3
+          ELSE 1
+        END
+      ) DESC
       LIMIT ?
     `,
     )
