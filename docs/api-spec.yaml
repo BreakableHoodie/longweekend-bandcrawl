@@ -81,6 +81,7 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 20
                 items:
                   type: object
                   properties:
@@ -105,8 +106,8 @@ paths:
                       description: First of bandcamp, spotify or apple_music, else null
         "400":
           description: '`limit` was not an integer'
-        "403":
-          description: Public data publishing is disabled
+        "503":
+          $ref: "#/components/responses/PublicDataUnavailable"
         "500":
           description: Server error
 
@@ -145,8 +146,8 @@ paths:
                         origin_city:
                           type: string
                           nullable: true
-        "403":
-          description: Public data publishing is disabled
+        "503":
+          $ref: "#/components/responses/PublicDataUnavailable"
         "500":
           description: Server error
 
@@ -181,6 +182,7 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 20
                 items:
                   type: object
                   properties:
@@ -192,8 +194,8 @@ paths:
                       type: integer
         "400":
           description: Band identifier missing
-        "403":
-          description: Public data publishing is disabled
+        "503":
+          $ref: "#/components/responses/PublicDataUnavailable"
         "404":
           description: No such artist
         "500":
