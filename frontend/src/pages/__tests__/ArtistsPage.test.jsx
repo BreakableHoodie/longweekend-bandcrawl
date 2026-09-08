@@ -171,6 +171,47 @@ describe('ArtistsPage', () => {
   // `social` while being absent from `link_fields`. That is exactly #712: a
   // filter reporting "has Spotify" while the row shows no Spotify icon, so the
   // artist is skipped in the data-entry pass meant to catch them.
+  // Filtering is client-side over the artists loaded so far. Gating "Load more"
+  // on an unfiltered list therefore made matches on page 2+ UNREACHABLE, and the
+  // empty state asserted "No artists match" when it could only know "none among
+  // the ones loaded". Both halves are asserted here.
+  it('keeps Load more reachable while filtering, and does not overclaim', async () => {
+    fetchPublicJson.mockImplementation(url => {
+      if (url.includes('/api/artists/shuffle')) return Promise.resolve([])
+      if (url.includes('/api/artists/one-of-one')) return Promise.resolve([])
+      return Promise.resolve({
+        artists: [
+          {
+            id: 61,
+            name: 'Only Bandcamp',
+            genre: 'folk',
+            origin: null,
+            photo_url: null,
+            performance_count: 1,
+            social: { bandcamp: 'https://only.bandcamp.com' },
+            link_fields: ['bandcamp'],
+          },
+        ],
+        hasMore: true,
+      })
+    })
+    renderPage()
+    await screen.findByText('Only Bandcamp')
+
+    // Leave a filter ACTIVE. The first version of this test toggled the chip
+    // back off before asserting, so activeFilters was empty and the buggy gate
+    // `hasMore && activeFilters.length === 0` still rendered Load more -- the
+    // test passed against the bug it was written to catch.
+    const filters = screen.getByRole('group', { name: /filter by platform/i })
+    fireEvent.click(within(filters).getByRole('button', { name: /bandcamp/i }))
+    expect(within(filters).getByRole('button', { name: /bandcamp/i })).toHaveAttribute('aria-pressed', 'true')
+
+    expect(
+      screen.getByRole('button', { name: /load more/i }),
+      'Load more must stay reachable WHILE a filter is active, or matches on later pages are unreachable'
+    ).toBeInTheDocument()
+  })
+
   it('ignores a stored-but-unresolvable link in icons and counts — #712', async () => {
     fetchPublicJson.mockImplementation(url => {
       if (url.includes('/api/artists/shuffle')) return Promise.resolve([])

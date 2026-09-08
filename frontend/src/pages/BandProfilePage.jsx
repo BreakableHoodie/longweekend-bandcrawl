@@ -232,17 +232,23 @@ export default function BandProfilePage() {
   // Passes the id (not the slug) per the spec: the path segment is spelled
   // [name] on disk for routing reasons, but callers send the numeric id.
   useEffect(() => {
+    // Clear FIRST. Without this, navigating from profile A to profile B renders
+    // A's stage mates under B's name until B's request resolves — and if B's
+    // request fails or returns a non-array, A's list stays visible indefinitely.
+    setStageMates([])
     if (!profile?.id) return
-    let active = true
-    fetchPublicJson(`/api/bands/${profile.id}/stage-mates`, {}, 'Failed to load stage mates')
+    // fetchPublicJson retries a failed GET after 600ms, so an in-flight request
+    // can fire again after this effect is disposed. The signal stops that.
+    const controller = new AbortController()
+    fetchPublicJson(`/api/bands/${profile.id}/stage-mates`, { signal: controller.signal }, 'Failed to load stage mates')
       .then(data => {
-        if (active && Array.isArray(data)) setStageMates(data)
+        if (!controller.signal.aborted && Array.isArray(data)) setStageMates(data)
       })
       .catch(() => {
         // Silent — stage-mates is ambient content; an error leaves the section absent.
       })
     return () => {
-      active = false
+      controller.abort()
     }
   }, [profile?.id])
 
@@ -737,7 +743,7 @@ export default function BandProfilePage() {
           <strong className="font-semibold text-text-secondary">Is this your band?</strong>{' '}
           <Link
             to={`/contact?artist=${profile.id}`}
-            className="text-accent-400 underline-offset-2 hover:text-accent-300 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent-400"
+            className="text-accent-400 underline underline-offset-2 hover:text-accent-300 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent-400"
           >
             Tell us if anything is wrong
           </Link>{' '}

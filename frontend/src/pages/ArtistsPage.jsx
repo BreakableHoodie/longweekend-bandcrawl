@@ -447,22 +447,33 @@ export default function ArtistsPage() {
           <p className="py-16 text-center text-text-secondary">{error.message}</p>
         ) : loading ? (
           <p className="py-16 text-center text-text-tertiary">Loading artists…</p>
-        ) : filteredArtists.length === 0 ? (
-          <p className="py-16 text-center text-text-secondary">
-            {activeFilters.length > 0
-              ? 'No artists match the selected platform filters.'
-              : query.trim()
-                ? `No artists match "${query.trim()}".`
-                : 'No artists to show yet.'}
-          </p>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredArtists.map(artist => (
-                <ArtistCard key={artist.id} artist={artist} />
-              ))}
-            </div>
-            {hasMore && activeFilters.length === 0 && (
+            {filteredArtists.length === 0 ? (
+              <p className="py-16 text-center text-text-secondary">
+                {activeFilters.length > 0
+                  ? hasMore
+                    ? // Filtering is client-side over the artists loaded SO FAR, so
+                      // "no matches" here means "none among these", not "none
+                      // exist". Saying otherwise is a claim the page cannot support.
+                      'No matches among the artists loaded so far — load more to keep looking.'
+                    : 'No artists match the selected platform filters.'
+                  : query.trim()
+                    ? `No artists match "${query.trim()}".`
+                    : 'No artists to show yet.'}
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {filteredArtists.map(artist => (
+                  <ArtistCard key={artist.id} artist={artist} />
+                ))}
+              </div>
+            )}
+            {/* Outside the empty branch on purpose. Gating this on a non-empty
+                filtered list made later pages unreachable: the filter runs over
+                loaded artists only, so hiding the one control that loads more is
+                what turned "no matches yet" into "no matches, ever". */}
+            {hasMore && (
               <div className="mt-8 text-center">
                 <button
                   type="button"
