@@ -1161,13 +1161,37 @@ by having the hook query the API; it is deliberately POSIX `sh` with no `gh`,
 `jq` or network call, because a hook that fails open when a tool is missing is
 worse than no hook.
 
-### CodeRabbit costs money past 5 reviews an hour — batch your pushes
+### CodeRabbit costs money past the included allowance — batch your pushes
 
-**Every push to a PR branch triggers a review.** CodeRabbit Pro allows **5 PR reviews per developer per ROLLING HOUR**, and this account has the usage-based add-on enabled — so past that, reviews are **not paused, they are billed**. There is no natural brake; the discipline has to come from the workflow.
+**Every push to a PR branch triggers a review.** Past the included allowance
+reviews are **not paused, they are billed** (this account has the usage-based
+add-on). There is no natural brake; the discipline has to come from the workflow.
+
+**The allowance is 1 review/hour, not 5, and it is DYNAMIC — read it, never
+recall it.** This section said "CodeRabbit Pro allows 5 PR reviews per developer
+per rolling hour" and the pre-push hook encoded `LIMIT=5` to match. Both were
+wrong, and wrong in the expensive direction. CodeRabbit states the real figure
+in the footer of every review it posts:
+
+> **Included review availability:** 0 reviews are currently available. Your
+> included PR review attempts over the past 7 days set your current allowance at
+> **1 review per hour**.
+>
+> **Plan**: Essentials
+
+Two things that footer makes plain and the old text hid: the plan is
+**Essentials**, so the Pro figure never applied here at all; and the allowance
+**shrinks with recent usage**, so no static number stays correct. The hook now
+uses `LIMIT=1` — the observed floor — because when guessing costs money, the
+floor is the only safe static value. Raise it only against a CURRENT footer that
+says so.
+
+Found 2026-09-04, from a review footer on #1113, after a day of pushes the hook
+had waved through as "4 of 5 used".
 
 **The expensive failure is concentration, not volume.** The same number of pushes spread across a day costs nothing, because the window keeps refilling. PR #998 burned **4 reviews in ~25 minutes on a two-line change** — which, with #997's review already inside the same rolling hour, is what reached the limit of 5. Fixes went out one at a time instead of batched — a stale comment, then an E2E failure, then an incomplete sweep of that same failure, then a nit on prose added two pushes earlier. Three of the four were avoidable by reading the diff and running the right suite locally first.
 
-`make hooks` installs a tracked `pre-push` guard (`.githooks/pre-push`, wired via `core.hooksPath`). It warns at 3 reviews in the window and **blocks at 5**, reporting how many minutes until the budget refills. Run it once per clone — hooks are not cloned with the repo.
+`make hooks` installs a tracked `pre-push` guard (`.githooks/pre-push`, wired via `core.hooksPath`). It warns at the first review in the window and **blocks at the allowance**, reporting how many minutes until the budget refills. Run it once per clone — hooks are not cloned with the repo.
 
 **The rule for overriding is urgency to land, NOT issue priority.** Priority is the wrong axis: a p1 fixed correctly costs one review, while a p3 botched four times costs four — overage comes from *rework*, not importance, and a "p1 only" rule would license sloppiness exactly where correctness matters most.
 

@@ -24,8 +24,26 @@
 set -eu
 
 WINDOW_SECONDS=3600
-LIMIT=5
-WARN_AT=3
+
+# The included allowance is 1 review/hour, NOT 5.
+#
+# This was wrong from the day the hook shipped. It encoded "CodeRabbit Pro
+# allows 5 PR reviews per developer per rolling hour", but the account is on
+# **Essentials**, and CodeRabbit reports the allowance in its own review footer:
+#
+#   "Included review availability: 0 reviews are currently available. Your
+#    included PR review attempts over the past 7 days set your current
+#    allowance at 1 review per hour."
+#
+# Two things that message makes clear and the old value hid:
+#   1. The plan is Essentials, so the Pro figure never applied here.
+#   2. The allowance is DYNAMIC -- it shrinks with recent usage -- so no static
+#      number is right for long. 1 is the observed floor, and a floor is the
+#      only safe static value when guessing high costs money.
+#
+# Set LIMIT above 1 only against a CURRENT footer that says so, not from memory.
+LIMIT=1
+WARN_AT=1
 DEFAULT_BRANCH=main
 
 # pre-push receives one line per ref being updated on STDIN:
