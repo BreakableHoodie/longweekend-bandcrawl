@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createTestEnv, insertBand, insertEvent, insertVenue } from "../../test-utils";
 import * as shuffle from "../shuffle.js";
 import * as oneOfOne from "../one-of-one.js";
@@ -67,6 +70,38 @@ describe("artist showcase endpoints", () => {
 
     expect(unseen).toBeGreaterThan(popular);
     expect(unseen).toBeGreaterThan(70);
+  });
+
+  // The behavioural test above catches the weighting being REMOVED (100 draws,
+  // unseen must beat 70), but it cannot separate a correct 6:1 from a biased
+  // 10:1 -- telling those apart needs thousands of draws and would be flaky.
+  // So the algorithm is pinned by source scan, which is deterministic and is
+  // how this repo guards its other one-canonical-form invariants.
+  //
+  // What this prevents: reverting to `ORDER BY RANDOM() / weight`, which looks
+  // equivalent and is not. Measured over 300k single draws at weights 6/3/1 it
+  // selects 69.3 / 23.7 / 7.0 where proportionality needs 60 / 30 / 10 -- an
+  // effective ratio near 10:1 from a stated 6:1. U^(1/w) returns 60/30/10.
+  it("draws with Efraimidis-Spirakis, not a plain random-over-weight sort", () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "shuffle.js"), "utf8");
+
+    // The scan must be able to find what it hunts, or it reports all-clear forever.
+    expect(source).toContain("ORDER BY");
+
+    expect(source, "shuffle must raise U to the 1/weight power (Efraimidis-Spirakis)").toMatch(/ORDER BY\s+POW\(/);
+    expect(source, "keys must sort descending -- largest U^(1/w) wins").toMatch(/\)\s*DESC/);
+    expect(source, "dividing a raw RANDOM() by the weight is the biased form this replaced").not.toMatch(
+      /RANDOM\(\)\s*\*?\s*[\d.]*\s*\/\s*CASE/,
+    );
+
+    // Weights are the spec's 6/3/1. The unseen bucket was 9 in code while the
+    // merged spec said 6, in prose, twice -- they shipped disagreeing.
+    // All THREE branches, matched as ONE expression. Asserting the branches
+    // separately leaves the last one unpinned: `ELSE 2` changes every selection
+    // probability and passed the earlier version of this guard, verified.
+    expect(source, "the weight CASE must be exactly 6 / 3 / 1 -- the spec's stated ratio, all three branches").toMatch(
+      /WHEN COALESCE\(total_views, 0\) = 0 THEN 6\s*\n\s*WHEN total_views BETWEEN 1 AND 9 THEN 3\s*\n\s*ELSE 1\s*\n\s*END/,
+    );
   });
 
   it("returns only case-insensitive single-artist genre tags split by commas and slashes", async () => {
