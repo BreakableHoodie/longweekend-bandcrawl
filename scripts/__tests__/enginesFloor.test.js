@@ -47,9 +47,21 @@ describe("engines.node covers the APIs the code actually uses", () => {
     expect(semver.validRange(declared), `engines.node ${declared} is not a valid range`).toBeTruthy();
   });
 
-  // A scan that reads no files reports all-clear forever.
-  it("finds files to scan", () => {
-    expect(trackedJsFiles().length).toBeGreaterThan(100);
+  // A scan that reads no files reports all-clear forever. `> 0` is the honest
+  // assertion for that -- an earlier `> 100` coupled the guard to repository
+  // SIZE, so shrinking the repo would fail it for a reason unrelated to whether
+  // the scan works.
+  //
+  // But `> 0` alone would not notice the glob being NARROWED to one directory,
+  // which is the realistic way this rots. So it also asserts a known file is in
+  // the list. This file is the one used, because it is guaranteed to exist
+  // whenever the assertion runs.
+  it("finds files to scan, including a known one", () => {
+    const files = trackedJsFiles();
+    expect(files.length).toBeGreaterThan(0);
+    expect(files, "the scan should reach this very test file -- if not, the glob has narrowed").toContain(
+      "scripts/__tests__/enginesFloor.test.js",
+    );
   });
 
   it.each(VERSION_GATED_APIS)("floor covers $name (since $since)", ({ pattern, since, name }) => {
