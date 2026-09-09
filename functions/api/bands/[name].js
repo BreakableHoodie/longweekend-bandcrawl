@@ -5,6 +5,7 @@ import { safeReflectSocialLinks } from "../../utils/validation.js";
 import { eventLocalFestivalToday } from "../../utils/eventDay.js";
 import { publicEventStatusSql } from "../../utils/eventVisibility.js";
 import { BAND_LINK_FIELD_KEYS } from "../../utils/bandLinkFields.js";
+import { isCanonicalPositiveId } from "../../utils/validation/ids.js";
 
 /**
  * Public API: Get band profile by name
@@ -52,8 +53,11 @@ export async function onRequestGet(context) {
     let bandId = null;
     let searchName = null;
 
-    if (!isNaN(searchParam) && parseInt(searchParam) > 0) {
-      bandId = parseInt(searchParam);
+    // Canonical decimal only. The old `!isNaN(x) && parseInt(x) > 0` accepted
+    // "1.9" -> band 1, "1e2" -> band 1 and "0x10" -> band 16: paths resolving to
+    // records they do not name. See isCanonicalPositiveId's header (#1120).
+    if (isCanonicalPositiveId(searchParam)) {
+      bandId = Number(searchParam);
     } else {
       // Normalize name: replace hyphens with spaces and trim
       searchName = searchParam.replace(/-/g, " ").trim();
