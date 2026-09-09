@@ -1,6 +1,9 @@
 {
   "name": "settimes",
   "version": "1.0.0",
+  "engines": {
+    "node": ">=20.11"
+  },
   "type": "module",
   "description": "SetTimes.ca - Event Schedule & Performance Management Platform",
   "scripts": {
