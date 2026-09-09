@@ -130,7 +130,7 @@ export default function ColumnFilter({
     <div
       ref={panelRef}
       id={panelId}
-      className="w-72 rounded-lg border border-accent-500/30 bg-bg-purple p-2 shadow-xl max-h-[70vh] overflow-y-auto"
+      className="w-72 rounded-lg border border-accent-500 bg-slate-800 p-2 shadow-2xl ring-1 ring-black/50 max-h-[70vh] overflow-y-auto"
     >
       <div className="px-1 pb-2">
         <input
