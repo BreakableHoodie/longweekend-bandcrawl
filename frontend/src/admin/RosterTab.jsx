@@ -814,7 +814,7 @@ export default function RosterTab({ showToast, readOnly = false }) {
                       renderColumnFilterPanel={renderColumnFilterPanel}
                     />
                     {!readOnly && (
-                      <th className="sticky right-0 z-10 bg-bg-navy px-3 py-3 text-right text-white font-semibold whitespace-nowrap align-middle">
+                      <th className="sticky right-0 z-10 bg-bg-navy border-l border-white/20 px-3 py-3 text-right text-white font-semibold whitespace-nowrap align-middle">
                         Actions
                       </th>
                     )}
@@ -866,7 +866,7 @@ export default function RosterTab({ showToast, readOnly = false }) {
                           </td>
                         )}
                         <td
-                          className={`sticky ${readOnly ? 'left-0' : 'left-12'} z-10 px-3 py-3 text-white font-medium ${stickyCellClassName}`}
+                          className={`sticky ${readOnly ? 'left-0' : 'left-12'} z-10 border-r border-white/20 px-3 py-3 text-white font-medium ${stickyCellClassName}`}
                         >
                           <div className="flex items-center gap-2">
                             <a
@@ -907,7 +907,9 @@ export default function RosterTab({ showToast, readOnly = false }) {
                           )}
                         </td>
                         {!readOnly && (
-                          <td className={`sticky right-0 z-10 px-3 py-3 ${stickyCellClassName}`}>
+                          <td
+                            className={`sticky right-0 z-10 border-l border-white/20 px-3 py-3 ${stickyCellClassName}`}
+                          >
                             <div className="flex justify-end gap-2">
                               <button
                                 onClick={() => startEdit(band)}
