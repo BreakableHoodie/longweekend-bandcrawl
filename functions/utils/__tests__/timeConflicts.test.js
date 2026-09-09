@@ -704,6 +704,11 @@ describe("detectBulkConflicts — D1's 100-parameter ceiling (#1131 review)", ()
     expect(ids.size, "each mover must be reported exactly once").toBe(50);
   });
 
+  // 150 ids, not 100. MAX_BULK_BAND_IDS is 200, and the query that loads the
+  // batch binds ONE PARAMETER PER ID -- so it breaks at 101. A fixture of exactly
+  // 100 sits at the limit and cannot detect it, which is how that third site
+  // survived a sweep of the two action branches (#1131 review).
+  //
   // THE CEILING ITSELF, asserted by counting binds rather than by running the
   // query -- because running it cannot fail here. The unit harness is
   // better-sqlite3, whose variable limit is ~32766; D1's is 100. A 101-parameter
@@ -719,7 +724,7 @@ describe("detectBulkConflicts — D1's 100-parameter ceiling (#1131 review)", ()
     const target = insertVenue(rawDb, { name: "Bind Target" });
 
     const movers = [];
-    for (let i = 0; i < 100; i += 1) {
+    for (let i = 0; i < 150; i += 1) {
       const event = insertEvent(rawDb, {
         name: `Bind Event ${i}`,
         slug: `bind-evt-${i}`,

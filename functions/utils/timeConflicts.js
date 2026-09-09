@@ -128,22 +128,34 @@ export async function detectBulkConflicts(env, { action, bandIds, params }) {
   if (!bandIds || bandIds.length === 0) return [];
 
   const conflicts = [];
-  const placeholders = bandIds.map(() => "?").join(",");
+  // D1 binds at most 100 parameters per query, and `band_ids` is capped at
+  // MAX_BULK_BAND_IDS (200) -- so this query, which binds one per id, breaks at
+  // 101. It runs BEFORE the action branch, so it affects both.
+  //
+  // This is the THIRD site of the same defect in this file. The other two are in
+  // the branches below; this one is the shared prologue, which is why sweeping
+  // the branches alone missed it (#1131 review).
+  const BIND_CHUNK = 100;
+  const bandRows = [];
+  for (let i = 0; i < bandIds.length; i += BIND_CHUNK) {
+    const chunk = bandIds.slice(i, i + BIND_CHUNK);
+    const chunkPh = chunk.map(() => "?").join(",");
+    // Fetch all performance data for the batch (including archived events), then
+    // filter out archived-event rows before scheduling-conflict checks. Callers
+    // that need archived-event error messages (bulk-preview) handle those separately.
+    const page = await env.DB.prepare(
+      `SELECT p.id, p.start_time, p.end_time, p.venue_id, p.event_id, p.performance_date, bp.name, e.status AS event_status, e.date AS event_date
+       FROM performances p
+       JOIN band_profiles bp ON p.band_profile_id = bp.id
+       JOIN events e ON p.event_id = e.id
+       WHERE p.id IN (${chunkPh})`,
+    )
+      .bind(...chunk)
+      .all();
+    bandRows.push(...(page.results || []));
+  }
 
-  // Fetch all performance data for the batch (including archived events), then
-  // filter out archived-event rows before scheduling-conflict checks. Callers
-  // that need archived-event error messages (bulk-preview) handle those separately.
-  const bands = await env.DB.prepare(
-    `SELECT p.id, p.start_time, p.end_time, p.venue_id, p.event_id, p.performance_date, bp.name, e.status AS event_status, e.date AS event_date
-     FROM performances p
-     JOIN band_profiles bp ON p.band_profile_id = bp.id
-     JOIN events e ON p.event_id = e.id
-     WHERE p.id IN (${placeholders})`,
-  )
-    .bind(...bandIds)
-    .all();
-
-  const bandResults = (bands.results || []).filter((b) => b.event_status !== "archived");
+  const bandResults = bandRows.filter((b) => b.event_status !== "archived");
 
   // Festival-day scoping (#551): two sets on different festival days never
   // conflict, even at the same venue and clock time (mirrors checkConflicts in
