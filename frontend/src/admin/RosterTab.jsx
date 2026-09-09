@@ -680,13 +680,7 @@ export default function RosterTab({ showToast, readOnly = false }) {
         ) : (
           <>
             <div className="hidden md:block overflow-x-auto">
-              {/* min-w-max, not w-full alone. With `w-full` the table can never exceed
-                  its container, so `overflow-x-auto` never scrolls and the columns are
-                  squeezed instead -- and the sticky-right Actions column then sits
-                  permanently on top of the last data column (Followers rendered as
-                  "Follov"). Letting the table take its natural width restores the
-                  horizontal scroll that both sticky columns assume exists. */}
-              <table className="w-full min-w-max">
+              <table className="w-full">
                 <thead className="bg-bg-navy/50 border-b border-accent-500/20">
                   <tr>
                     {!readOnly && (
