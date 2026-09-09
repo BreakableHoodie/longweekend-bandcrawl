@@ -350,12 +350,25 @@ function normalizeArtistLinkField(value, config) {
   // -- and a dot rule would turn that into https://settimes.ca/, which is the
   // bug #1066 fixed. `settimes.ca` does not end in `instagram.com`, so it stays
   // a handle.
-  const host = trimmed.split("/")[0].toLowerCase();
+  // Split on the query and fragment delimiters too, not just "/". A host
+  // copied out of a browser arrives as `femto519.bandcamp.com?utm_source=x`,
+  // and leaving `?...` in the host makes it match no domain -- so the value
+  // fell through to the handle path and was rejected outright, while the
+  // identical string WITH `https://` was accepted and had its tracking
+  // parameters stripped. Same link, two answers, depending on a prefix the
+  // owner is being told they do not need. Caught by CodeRabbit on #1064.
+  const host = trimmed.split(/[/?#]/, 1)[0].toLowerCase();
   const isOwnDomain = Boolean(domain) && (host === domain || host.endsWith(`.${domain}`));
 
   if (!handleToUrl || looksLikePath || isOwnDomain) {
     const candidate = trimmed;
-    if (!candidate.split("/")[0].includes(".")) {
+    // Same split as the host above, and for the same reason. Splitting on "/"
+    // alone let a dot ANYWHERE after "?" or "#" satisfy this check, so
+    // `nodot?a=b.c` -- which has no dot in its host at all -- passed and was
+    // stored as `https://nodot/?a=b.c`: a dead link, written silently, which is
+    // precisely the failure this check exists to prevent. Found by sweeping the
+    // host-split class after CodeRabbit flagged the first instance.
+    if (!candidate.split(/[/?#]/, 1)[0].includes(".")) {
       throw new Error(`${label} must be a URL — start with https:// or provide the full address`);
     }
     const normalized = normalizeHttpUrl(`https://${candidate}`);

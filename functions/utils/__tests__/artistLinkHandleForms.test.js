@@ -22,13 +22,78 @@ import { sanitizeBandSocialLinks } from "../validation/urls.js";
 const one = (field, value) => JSON.parse(sanitizeBandSocialLinks({ [field]: value }))[field];
 
 // field -> [expected canonical URL, ...every input form that must produce it]
+//
+// The `?utm_source=` forms are here because a link pasted out of a browser
+// carries tracking parameters far more often than not, and the bare-host form
+// is exactly the one this feature is telling owners they may use. Bandcamp was
+// the live defect: the host was split on "/" alone, so `?utm_source=x` stayed
+// glued to the host, matched no domain, fell through to the handle path and was
+// REJECTED -- while the identical string with `https://` in front was accepted
+// and had the parameter stripped. Same link, two answers.
 const MATRIX = {
-  bandcamp: ["https://femto519.bandcamp.com/", "femto519", "femto519.bandcamp.com", "https://femto519.bandcamp.com"],
-  instagram: ["https://instagram.com/femto519", "femto519", "instagram.com/femto519", "https://instagram.com/femto519"],
-  facebook: ["https://facebook.com/femto519", "femto519", "facebook.com/femto519", "https://facebook.com/femto519"],
-  linktree: ["https://linktr.ee/femto519", "femto519", "linktr.ee/femto519", "https://linktr.ee/femto519"],
-  youtube: ["https://youtube.com/@femto519", "@femto519", "youtube.com/@femto519", "https://youtube.com/@femto519"],
+  bandcamp: [
+    "https://femto519.bandcamp.com/",
+    "femto519",
+    "femto519.bandcamp.com",
+    "https://femto519.bandcamp.com",
+    "femto519.bandcamp.com?utm_source=x",
+    "https://femto519.bandcamp.com?utm_source=x",
+  ],
+  instagram: [
+    "https://instagram.com/femto519",
+    "femto519",
+    "instagram.com/femto519",
+    "https://instagram.com/femto519",
+    "instagram.com/femto519?utm_source=x",
+  ],
+  facebook: [
+    "https://facebook.com/femto519",
+    "femto519",
+    "facebook.com/femto519",
+    "https://facebook.com/femto519",
+    "facebook.com/femto519?utm_source=x",
+  ],
+  linktree: [
+    "https://linktr.ee/femto519",
+    "femto519",
+    "linktr.ee/femto519",
+    "https://linktr.ee/femto519",
+    "linktr.ee/femto519?utm_source=x",
+  ],
+  youtube: [
+    "https://youtube.com/@femto519",
+    "@femto519",
+    "youtube.com/@femto519",
+    "https://youtube.com/@femto519",
+    "youtube.com/@femto519?utm_source=x",
+  ],
 };
+
+describe('the "looks like a URL" check reads the host, not the query', () => {
+  // Sibling of the host-split bug above, found by sweeping the class rather
+  // than reported. The check requires a dot so a bare word is not silently
+  // turned into a URL -- but it split on "/" alone, so a dot anywhere after
+  // "?" or "#" satisfied it. `nodot?a=b.c` therefore became
+  // `https://nodot/?a=b.c`: a dead link written with no error, which is the
+  // exact outcome the check exists to prevent.
+  it.each(["nodot?a=b.c", "nodot#x.y", "nodot"])("website: %s is rejected", (input) => {
+    expect(() => sanitizeBandSocialLinks({ website: input })).toThrow();
+  });
+
+  it.each(["example.com?utm_source=x", "example.com#x"])("website: %s still passes", (input) => {
+    expect(one("website", input)).toMatch(/^https:\/\/example\.com\//);
+  });
+});
+
+describe("a bare host keeps its own fragment rather than being rejected", () => {
+  // A fragment is part of the resource, not tracking, so unlike `?utm_source=`
+  // it survives normalisation -- which is why it cannot sit in MATRIX above.
+  // It still has to be READ as a host: before the fix, `#` stayed in the host
+  // string and the value was rejected outright.
+  it("bandcamp: femto519.bandcamp.com#music", () => {
+    expect(one("bandcamp", "femto519.bandcamp.com#music")).toBe("https://femto519.bandcamp.com/#music");
+  });
+});
 
 describe("artist link fields accept handle, bare domain, and full URL alike", () => {
   for (const [field, [expected, ...forms]] of Object.entries(MATRIX)) {
