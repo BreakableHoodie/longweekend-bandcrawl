@@ -25,25 +25,35 @@ set -eu
 
 WINDOW_SECONDS=3600
 
-# The included allowance is 1 review/hour, NOT 5.
+# The included allowance is DYNAMIC. Read it; never recall it.
 #
-# This was wrong from the day the hook shipped. It encoded "CodeRabbit Pro
-# allows 5 PR reviews per developer per rolling hour", but the account is on
-# **Essentials**, and CodeRabbit reports the allowance in its own review footer:
+# CodeRabbit states the current figure in the footer of every review it posts,
+# and this account (plan: Essentials) has been observed at two different values:
 #
-#   "Included review availability: 0 reviews are currently available. Your
-#    included PR review attempts over the past 7 days set your current
-#    allowance at 1 review per hour."
+#   2026-09-04, PR #1113:
+#     "0 reviews are currently available. Your included PR review attempts over
+#      the past 7 days set your current allowance at 1 review per hour."
 #
-# Two things that message makes clear and the old value hid:
-#   1. The plan is Essentials, so the Pro figure never applied here.
-#   2. The allowance is DYNAMIC -- it shrinks with recent usage -- so no static
-#      number is right for long. 1 is the observed floor, and a floor is the
-#      only safe static value when guessing high costs money.
+#   2026-09-09, PR #1134:
+#     "3 reviews are currently available. Your included PR review attempts over
+#      the past 7 days set your current allowance at 4 reviews per hour."
 #
-# Set LIMIT above 1 only against a CURRENT footer that says so, not from memory.
-LIMIT=1
-WARN_AT=1
+# So the allowance recovers as 7-day usage falls, and no static number stays
+# right. The hook cannot ask -- it is deliberately POSIX sh with no gh, jq or
+# network call, because one that fails open when a tool is missing is worse
+# than no hook at all.
+#
+# LIMIT tracks the most recent observed footer. It was 1 while that was the
+# observed figure; it is 4 because 2026-09-09 says so. The rule is unchanged:
+# move it only against a CURRENT footer, never from memory. The value being
+# an OBSERVATION WITH A DATE is the point -- if these comments are stale, the
+# number above them is too.
+#
+# Erring low is not free. Blocking a push when three reviews are genuinely
+# available teaches you to reach for CODERABBIT_OVERAGE reflexively, and an
+# override you always use is not a guard.
+LIMIT=4
+WARN_AT=2
 DEFAULT_BRANCH=main
 
 # pre-push receives one line per ref being updated on STDIN:

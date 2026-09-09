@@ -35,9 +35,12 @@ function stickyCellClassNames(src) {
     /<t[dh]\s+className="([^"]*)"/g,
     /stickyClassName=\{`([^`]*)`\}/g,
   ]
+  // matchAll rather than an exec loop: it satisfies the no-`null` rule in
+  // .github/instructions/nodejs-javascript-vitest.instructions.md without a
+  // `while (true)`/`break`, and it drops the stateful `lastIndex` that makes a
+  // reused /g regex order-dependent.
   for (const re of patterns) {
-    let m
-    while ((m = re.exec(src)) !== null) {
+    for (const m of src.matchAll(re)) {
       if (/\bsticky\b/.test(m[1])) out.push(m[1])
     }
   }
