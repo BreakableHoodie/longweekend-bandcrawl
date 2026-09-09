@@ -224,12 +224,24 @@ jobs:
       - name: Coverage floor (no handler at 0%)
         run: node scripts/check-coverage-floor.mjs
 
+      # The other half of the same problem. The floor catches a file nobody
+      # tested; this catches the THRESHOLD drifting so far below actual that a
+      # double-digit regression would pass. That has happened twice, to ~10
+      # points both times, because a ratchet re-tightened by hand decays while
+      # nothing fails. Must run after the coverage step -- it reads the summary
+      # that step produces.
+      - name: Coverage drift (thresholds still near actual)
+        run: node scripts/check-coverage-drift.mjs backend
+
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
 
       - name: Frontend coverage
         working-directory: frontend
         run: npm run test:coverage
+
+      - name: Frontend coverage drift
+        run: node scripts/check-coverage-drift.mjs frontend
 
   accessibility-tests:
     name: Accessibility Tests

@@ -39,7 +39,7 @@ E2E_ADMIN_PASSWORD ?= e2e-test-password-Xk9
 export E2E_ADMIN_EMAIL
 export E2E_ADMIN_PASSWORD
 
-.PHONY: help install build dev format format-check lint lint-md lint-sh lint-yaml lint-sql lint-json \
+.PHONY: coverage-drift help install build dev format format-check lint lint-md lint-sh lint-yaml lint-sql lint-json \
 	lint-all test test-backend test-frontend mutation-gate coverage-floor gate review review-wip validate-openapi schema-check \
 	probe-links e2e e2e-setup e2e-serve e2e-run e2e-clean hooks delegate-stats
 
@@ -168,6 +168,12 @@ mutation-gate: ## Convert documented invariants into executable proof (~8s; NOT 
 coverage-floor: ## Fail if any functions/api handler has 0% coverage (runs the coverage suite first)
 	npm run test:coverage
 	node scripts/check-coverage-floor.mjs
+
+coverage-drift: ## Fail if coverage thresholds have drifted below actual (runs both coverage suites first)
+	npm run test:coverage
+	node scripts/check-coverage-drift.mjs backend
+	npm run test:coverage --prefix frontend
+	node scripts/check-coverage-drift.mjs frontend
 
 gate: format format-check lint-all test build ## FULL pre-commit gate — run before every commit
 
