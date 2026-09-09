@@ -365,9 +365,12 @@ describe("GET /api/bands/confirm-follow-batch", () => {
  * LISTS THE BAND NAMES, so an ungated resolve enumerated over email exactly
  * what the response refuses to enumerate over HTTP.
  *
- * These assert on the EMAIL, not the status code, for that reason: a test that
- * checked the response could not fail, because the response is identical in
- * both directions by design.
+ * These assert on the PERSISTED FOLLOW ROWS, not the status code, for that
+ * reason: a test that checked the response could not fail, because the response
+ * is identical in both directions by design. The rows are a sound proxy for the
+ * email rather than a substitute -- the INSERTs and the email's band list are
+ * built from the same `bands.results` set -- but no email BODY is inspected
+ * here, so do not read these as email-content coverage.
  */
 describe("POST /api/bands/follow-batch — non-public bands are never resolved", () => {
   const waitUntilSync = (p) => p;

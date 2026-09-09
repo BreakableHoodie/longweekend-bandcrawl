@@ -101,9 +101,23 @@ export async function onRequest(context) {
       const byId = new Map((detail.results || []).map((r) => [r.performance_id, r.name]));
       resolvedNames = performanceIds.map((id) => byId.get(id)).filter(Boolean);
     } catch (err) {
-      // Resolution failure degrades to the stale snapshot rather than losing
-      // the OG card entirely -- a slightly-off card beats none.
       console.error("Share-link performance resolution failed:", slug, err);
+      // FAIL CLOSED. This used to fall through to `bandNames` -- the stale,
+      // caller-supplied snapshot -- on the reasoning that a slightly-off card
+      // beats none. That was sound while the query was UNGATED: it could only
+      // return what the visitor was already entitled to.
+      //
+      // Adding the gate above inverted it. Those three predicates are now the
+      // only thing withholding non-public names on this route, so falling back
+      // serves exactly what they exist to withhold -- to a crawler, with
+      // Cache-Control: public, max-age=300. Reachable throws include a D1
+      // error and a legacy oversized `performance_ids` array crossing the bind
+      // ceiling now that `row.event_id` adds one.
+      //
+      // A card-less preview is the acceptable loss; an un-tellable one is not.
+      // Note this diverges from the sibling API route, which 500s on a throw --
+      // both fail closed, in the way each surface can.
+      return env.ASSETS.fetch(request);
     }
   }
 

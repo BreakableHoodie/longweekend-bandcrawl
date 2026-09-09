@@ -1043,8 +1043,14 @@ run() { npx vitest run $SUITES; }     # WRONG in zsh
 **zsh does not word-split unquoted parameter expansions; bash does.** So vitest
 received one filter string containing spaces, matched nothing, and exited 1. The
 same function pasted into bash would have worked, which is exactly why it looks
-correct. Use an array (`SUITES=(dir/ a.test.js)` then `$SUITES`), or pass the
-paths literally.
+correct.
+
+Use an array and expand it **quoted** — `SUITES=(dir/ a.test.js)` then
+`"${SUITES[@]}"`, which is right in both shells — or pass the paths literally.
+Bare `$SUITES` on an array is the same bug mirrored: correct in zsh, but in bash
+it expands to the FIRST ELEMENT ONLY, so the runner quietly executes one suite,
+passes, and reports exit 0. That is the false-green direction, which this file
+holds to be the never-noticed kind.
 
 Two habits that catch it, both cheap:
 
