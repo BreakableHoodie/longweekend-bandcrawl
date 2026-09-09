@@ -67,13 +67,20 @@ describe("GET /s/[slug] — the OG card resolves only publicly-visible sets", ()
     rawDb.prepare("UPDATE events SET reveal_mode = 1 WHERE id = ?").run(ev.id);
     const hidden = insertBand(rawDb, { name: "Secret Headliner", event_id: ev.id });
     rawDb.prepare("UPDATE performances SET is_announced = 0 WHERE id = ?").run(hidden.id);
+    // A POSITIVE CONTROL is required here. With only the unannounced set, the
+    // non-throwing path ALSO yields an empty card, so two negative assertions
+    // would pass just as well if the route had bailed at the share_links
+    // lookup and never reached the catch. This announced band makes the
+    // non-throw path produce an og:title, so its absence proves the catch was
+    // the exit taken.
+    const announced = insertBand(rawDb, { name: "Announced Act", event_id: ev.id });
 
     insertShareLink(rawDb, {
       slug: "ogcard03",
       event_id: ev.id,
       event_slug: "vol17",
-      performance_ids: [hidden.id],
-      band_names: ["Secret Headliner"],
+      performance_ids: [announced.id, hidden.id],
+      band_names: ["Announced Act", "Secret Headliner"],
     });
 
     // Break ONLY the performance-detail query, leaving the share_links lookup
@@ -95,6 +102,7 @@ describe("GET /s/[slug] — the OG card resolves only publicly-visible sets", ()
     // The whole point: the stored `band_names` are caller-supplied and ungated.
     // Before this fix the catch fell through to them and built a real OG card.
     expect(html).not.toContain("Secret Headliner");
+    expect(html).not.toContain("Announced Act");
     expect(html).not.toContain("og:title");
   });
 

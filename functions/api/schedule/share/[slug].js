@@ -122,14 +122,13 @@ export async function onRequestGet(context) {
     // `performance_ids` and `band_names` are deliberately returned unchanged:
     // App.jsx re-fetches this endpoint with `?import=1` to APPLY a shared route
     // and reads those two fields. `bands` is purely additive.
-    let bands = band_names.map((name, i) => ({
-      performance_id: performance_ids[i] ?? null,
-      name,
-      start_time: null,
-      end_time: null,
-      venue: null,
-      performance_date: null,
-    }));
+    // Seeded EMPTY, not from `band_names`. Those names are caller-supplied and
+    // ungated; mapping them into `.name` made `bands[].name` conditionally
+    // DB-resolved, contradicting the contract the gate below and
+    // SharePreviewPage both rely on. Unreachable today -- the write path
+    // requires equal, non-empty arrays -- but a shape nobody should have to
+    // re-derive is safe.
+    let bands = [];
 
     if (performance_ids.length > 0) {
       // Bind ids as placeholders — never interpolate them into SQL. The array is
@@ -148,18 +147,21 @@ export async function onRequestGet(context) {
       //                    business resolving, whatever that event's state.
       //                    This closes the cross-event class rather than the
       //                    currently-known instances of it.
-      //   status gate      defence in depth, and DELIBERATELY UNTESTABLE.
-      //                    Removing this line alone leaves the suite green --
-      //                    verified: it is a surviving mutant, not an untried
-      //                    one. It has to be, because the outer query 404s
-      //                    unless the link's own event is publicly visible and
-      //                    the line above scopes to that same event, so no
-      //                    reachable input distinguishes it. Kept on the same
-      //                    reasoning CLAUDE.md records for `verifyApiKey`'s
-      //                    redundant `is_active = 1`: a backstop for a path
-      //                    nobody has written yet. If the outer query is ever
-      //                    loosened (an admin preview of a draft event's link
-      //                    is the plausible one) this is the only gate left.
+      //   status gate      LOAD-BEARING ACROSS A TOCTOU WINDOW, though no test
+      //                    can show it. Removing this line alone leaves the
+      //                    suite green -- verified; it is a surviving mutant.
+      //                    But that is a limit of the harness, not proof of
+      //                    redundancy: the outer query and this one are two
+      //                    separate D1 round-trips, so an admin who archives or
+      //                    unpublishes the event BETWEEN them leaves this
+      //                    predicate as the only thing stopping the detail
+      //                    query returning names for a now-non-public event.
+      //                    A test cannot construct that without interleaving
+      //                    control of the two queries.
+      //                    The window is milliseconds and the surface caches,
+      //                    so it is marginal -- but it is reachable, which is a
+      //                    stronger reason to keep the line than the
+      //                    defence-in-depth framing this comment used to give.
       //                    Do not delete it to clean up a mutation score.
       //   reveal gate      NOT redundant. An unannounced set on this very
       //                    event, published and visible, must still be hidden

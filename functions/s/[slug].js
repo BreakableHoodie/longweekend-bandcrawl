@@ -110,9 +110,11 @@ export async function onRequest(context) {
       // Adding the gate above inverted it. Those three predicates are now the
       // only thing withholding non-public names on this route, so falling back
       // serves exactly what they exist to withhold -- to a crawler, with
-      // Cache-Control: public, max-age=300. Reachable throws include a D1
-      // error and a legacy oversized `performance_ids` array crossing the bind
-      // ceiling now that `row.event_id` adds one.
+      // Cache-Control: public, max-age=300. A D1 error is the reachable throw.
+      // (An earlier draft of this comment also named a legacy oversized
+      // `performance_ids` array crossing the bind ceiling. That is NOT
+      // reachable: MAX_PERFORMANCE_IDS has been 50 since share.js's first
+      // commit, and that route is the only writer this table has ever had.)
       //
       // A card-less preview is the acceptable loss; an un-tellable one is not.
       // Note this diverges from the sibling API route, which 500s on a throw --
