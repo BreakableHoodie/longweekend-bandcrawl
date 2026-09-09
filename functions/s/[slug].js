@@ -32,7 +32,7 @@ export async function onRequest(context) {
       // returns nothing. That disagreement between a crawler-facing meta layer
       // and the data layer behind it is the #787 failure shape; all three
       // routes serving a share slug now gate identically.
-      `SELECT sl.slug, sl.performance_ids, sl.band_names, e.name AS event_name
+      `SELECT sl.slug, sl.event_id, sl.performance_ids, sl.band_names, e.name AS event_name
        FROM share_links sl
        JOIN events e ON e.id = sl.event_id AND ${publicEventStatusSql("e")}
        WHERE sl.slug = ? AND sl.expires_at > datetime('now')`,
@@ -75,20 +75,51 @@ export async function onRequest(context) {
   if (Array.isArray(performanceIds) && performanceIds.length > 0) {
     try {
       const placeholders = performanceIds.map(() => "?").join(",");
+      // Gated exactly as GET /api/schedule/share/[slug] is, and for the same
+      // reason (#1133): these ids are CALLER-SUPPLIED -- whoever created the
+      // link chose them -- so the outer query vetting the link's own event says
+      // nothing about them. Ungated, this resolved `bp.name` for any
+      // performance row in the database.
+      //
+      // The comment above about all three routes gating identically was true of
+      // the OUTER query and false here until this fix. This route is the
+      // crawler-facing one, which makes the unannounced case the sharp edge: a
+      // headliner's name in an OG card is the exact disclosure staged reveal
+      // exists to prevent, and a crawler is the last audience you can un-tell.
       const detail = await DB.prepare(
         `SELECT p.id AS performance_id, bp.name AS name
          FROM performances p
          JOIN band_profiles bp ON bp.id = p.band_profile_id
-         WHERE p.id IN (${placeholders})`,
+         JOIN events e ON e.id = p.event_id
+         WHERE p.id IN (${placeholders})
+           AND p.event_id = ?
+           AND ${publicEventStatusSql("e")}
+           AND (e.reveal_mode = 0 OR p.is_announced = 1)`,
       )
-        .bind(...performanceIds)
+        .bind(...performanceIds, row.event_id)
         .all();
       const byId = new Map((detail.results || []).map((r) => [r.performance_id, r.name]));
       resolvedNames = performanceIds.map((id) => byId.get(id)).filter(Boolean);
     } catch (err) {
-      // Resolution failure degrades to the stale snapshot rather than losing
-      // the OG card entirely -- a slightly-off card beats none.
       console.error("Share-link performance resolution failed:", slug, err);
+      // FAIL CLOSED. This used to fall through to `bandNames` -- the stale,
+      // caller-supplied snapshot -- on the reasoning that a slightly-off card
+      // beats none. That was sound while the query was UNGATED: it could only
+      // return what the visitor was already entitled to.
+      //
+      // Adding the gate above inverted it. Those three predicates are now the
+      // only thing withholding non-public names on this route, so falling back
+      // serves exactly what they exist to withhold -- to a crawler, with
+      // Cache-Control: public, max-age=300. A D1 error is the reachable throw.
+      // (An earlier draft of this comment also named a legacy oversized
+      // `performance_ids` array crossing the bind ceiling. That is NOT
+      // reachable: MAX_PERFORMANCE_IDS has been 50 since share.js's first
+      // commit, and that route is the only writer this table has ever had.)
+      //
+      // A card-less preview is the acceptable loss; an un-tellable one is not.
+      // Note this diverges from the sibling API route, which 500s on a throw --
+      // both fail closed, in the way each surface can.
+      return env.ASSETS.fetch(request);
     }
   }
 

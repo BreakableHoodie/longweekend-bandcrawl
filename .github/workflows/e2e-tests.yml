@@ -58,6 +58,27 @@ jobs:
                   PLAYWRIGHT_SKIP_A11Y_VISUAL: 'true'
               run: npx playwright test --reporter=list,html
 
+            # The server's own log, not the tests'. On 2026-09-09 fifty specs
+            # failed with ERR_CONNECTION_REFUSED after the boot loop had
+            # already reported "Server is ready" and the setup project had
+            # passed -- so wrangler started, served, then stopped. The
+            # Playwright report records fifty identical connection errors and
+            # nothing about WHY the server went away, because /tmp/wrangler.log
+            # was never collected. A red build with no diagnostic is the same
+            # family as a green one that did not look.
+            #
+            # if-no-files-found: warn -- the log is absent when the
+            # affected-paths filter skips the environment step entirely, which
+            # is a legitimate no-op rather than a failure.
+            - name: Upload wrangler server log
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              if: always()
+              with:
+                  name: wrangler-log-e2e
+                  path: /tmp/wrangler.log
+                  if-no-files-found: warn
+                  retention-days: 30
+
             - name: Upload Playwright report
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               if: always()
