@@ -28,7 +28,15 @@ export default function FilterFunnel({ label, active = false, open = false, pane
       aria-label={`Filter by ${label}`}
       className={active ? ACTIVE_CLASS : INACTIVE_CLASS}
     >
-      <ListFilter size={16} aria-hidden="true" />
+      {/* shrink-0 is load-bearing, not defensive. The button is `flex`, so the
+          icon is a FLEX ITEM and takes the default `flex-shrink: 1` -- which
+          collapsed it to `width: 0px` while `height` stayed 16px, so every
+          column's filter trigger rendered a 24x36 hit area containing NOTHING
+          VISIBLE. The button was fully accessible the whole time (correct
+          aria-label, focusable, clickable); it was simply invisible, which is
+          why it read as a contrast bug and was first "fixed" by restyling the
+          PANEL it opens. Measured: 0px without this class, 16px with it. */}
+      <ListFilter size={16} className="shrink-0" aria-hidden="true" />
     </button>
   )
 }
