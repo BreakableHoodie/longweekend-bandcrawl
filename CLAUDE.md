@@ -1018,6 +1018,52 @@ break. It says nothing about invariants absent from its table, nor about test
 quality generally. Ten entries is a floor, not a certificate — add one whenever
 you add or change a test for something this file documents.
 
+### Hand-rolled mutation runs — check the harness ran, not just its exit code
+
+`make mutation-gate` is the maintained path and has none of this problem. But
+ad-hoc mutation checks — strip a line, run a suite, expect red — are a constant
+habit here, and an exit code alone cannot tell "the test caught the mutation"
+apart from "the test never ran". Both are `1`.
+
+Measured 2026-09-09 while gating #1133. Six mutations reported exit 1 and were
+recorded as caught. They were not: the log said
+
+```text
+No test files found, exiting with code 1
+```
+
+**The cause is zsh, and it will bite again.** The runner was wrapped in a
+function taking the suite list from a variable:
+
+```sh
+SUITES="dir/ a.test.js b.test.js"
+run() { npx vitest run $SUITES; }     # WRONG in zsh
+```
+
+**zsh does not word-split unquoted parameter expansions; bash does.** So vitest
+received one filter string containing spaces, matched nothing, and exited 1. The
+same function pasted into bash would have worked, which is exactly why it looks
+correct. Use an array (`SUITES=(dir/ a.test.js)` then `$SUITES`), or pass the
+paths literally.
+
+Two habits that catch it, both cheap:
+
+- **Run the baseline first and require it GREEN.** A baseline that is not
+  `exit=0` with a real passing count means the harness is broken before any
+  mutation is applied. This alone would have caught it six times over.
+- **Assert on the failing test NAME, not the exit code.** A caught mutation
+  names the test that caught it, and that name should be the one you predicted.
+  It also catches the *other* false positive: a mutation that fails everything
+  for an unrelated reason. Dropping `AND p.event_id = ?` while leaving its
+  `.bind()` argument in place did exactly that — 12 tests failed on a bind-count
+  error, which looks like a strongly-caught mutation and proves nothing about
+  the predicate. Removing the bind too narrowed it to the single test that
+  actually distinguishes the gate.
+
+Same family as the rest of this file's tooling traps: a gate that reports a
+verdict without having looked. Here it failed red rather than green, which is
+lucky — a false red is noticed eventually, a false green never is.
+
 ### The coverage floor — no handler may be entirely untested
 
 ```bash

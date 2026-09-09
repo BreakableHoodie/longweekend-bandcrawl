@@ -27,6 +27,7 @@ import { verifyTurnstile } from "../../utils/turnstile.js";
 import { escapeHtml } from "../../utils/html.js";
 import { getPublicBaseUrl } from "../../utils/publicUrl.js";
 import { parseJsonObjectBody } from "../../utils/request.js";
+import { publicEventStatusSql } from "../../utils/eventVisibility.js";
 
 const MAX_EMAIL_LENGTH = 320;
 const MAX_BATCH_SIZE = 30;
@@ -79,12 +80,28 @@ export async function onRequestPost(context) {
     // Resolve performance_ids → distinct band_profile_ids + band names.
     // Unknown performance IDs are silently dropped. If none resolve, return
     // success anyway (no enumeration of which IDs are valid).
+    // Gated like every other path that resolves CALLER-SUPPLIED performance ids
+    // (#1133). The HTTP response deliberately reveals nothing -- see the comment
+    // above -- but the confirmation email BELOW LISTS THE BAND NAMES, so an
+    // ungated resolve enumerated exactly what this endpoint refuses to
+    // enumerate over HTTP: post arbitrary ids with an address you control and
+    // read the names out of your inbox, including unannounced sets and bands on
+    // draft events.
+    //
+    // No event scoping here, unlike the two share-link routes: the body carries
+    // no event context, so there is nothing to scope TO. The status and reveal
+    // gates are the load-bearing pair regardless -- they are what withholds
+    // non-public bands; the event_id predicate there is a tightening, not the
+    // control.
     const placeholders = performanceIds.map(() => "?").join(",");
     const bands = await DB.prepare(
       `SELECT DISTINCT p.band_profile_id, bp.name AS band_name
        FROM performances p
        JOIN band_profiles bp ON bp.id = p.band_profile_id
-       WHERE p.id IN (${placeholders})`,
+       JOIN events e ON e.id = p.event_id
+       WHERE p.id IN (${placeholders})
+         AND ${publicEventStatusSql("e")}
+         AND (e.reveal_mode = 0 OR p.is_announced = 1)`,
     )
       .bind(...performanceIds)
       .all();

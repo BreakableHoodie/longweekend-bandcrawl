@@ -24,7 +24,7 @@ export async function onRequestGet(context) {
     // ON DELETE CASCADE on event_id means a deleted event also removes its share_links rows,
     // so a missing event naturally produces a 404 via the INNER JOIN returning no row.
     const row = await DB.prepare(
-      `SELECT sl.slug, sl.event_slug, sl.performance_ids, sl.band_names, e.name AS event_name
+      `SELECT sl.slug, sl.event_slug, sl.event_id, sl.performance_ids, sl.band_names, e.name AS event_name
        FROM share_links sl
        JOIN events e ON e.id = sl.event_id AND ${publicEventStatusSql("e")}
        WHERE sl.slug = ? AND sl.expires_at > datetime('now')`,
@@ -135,15 +135,52 @@ export async function onRequestGet(context) {
       // Bind ids as placeholders — never interpolate them into SQL. The array is
       // length-capped on the write path (MAX_PERFORMANCE_IDS in ../share.js).
       const placeholders = performance_ids.map(() => "?").join(",");
+      // This query resolves CALLER-SUPPLIED ids, so it needs its own gates --
+      // the outer query above vets the LINK's event, not the ids stored on it
+      // (#1133). Ungated it returned `bp.name`, times, date and venue for any
+      // performance row in the database: the stored `band_names` come from
+      // whoever created the link and echo back harmlessly, but `name` here is
+      // read from `band_profiles`, so arbitrary ids yielded real data.
+      //
+      // Three conditions, deliberately not one:
+      //   p.event_id = ?   the actual invariant -- a share link is one event's
+      //                    schedule, so an id from any other event has no
+      //                    business resolving, whatever that event's state.
+      //                    This closes the cross-event class rather than the
+      //                    currently-known instances of it.
+      //   status gate      defence in depth, and DELIBERATELY UNTESTABLE.
+      //                    Removing this line alone leaves the suite green --
+      //                    verified: it is a surviving mutant, not an untried
+      //                    one. It has to be, because the outer query 404s
+      //                    unless the link's own event is publicly visible and
+      //                    the line above scopes to that same event, so no
+      //                    reachable input distinguishes it. Kept on the same
+      //                    reasoning CLAUDE.md records for `verifyApiKey`'s
+      //                    redundant `is_active = 1`: a backstop for a path
+      //                    nobody has written yet. If the outer query is ever
+      //                    loosened (an admin preview of a draft event's link
+      //                    is the plausible one) this is the only gate left.
+      //                    Do not delete it to clean up a mutation score.
+      //   reveal gate      NOT redundant. An unannounced set on this very
+      //                    event, published and visible, must still be hidden
+      //                    -- matching the nine other public read paths that
+      //                    return per-performance rows.
+      //
+      // 50 ids max (MAX_PERFORMANCE_IDS) + 1 for event_id = 51 binds, inside
+      // D1's ceiling of 100.
       const detail = await DB.prepare(
         `SELECT p.id AS performance_id, bp.name AS name, p.start_time, p.end_time,
                 p.performance_date, p.is_cancelled, v.name AS venue
          FROM performances p
          JOIN band_profiles bp ON bp.id = p.band_profile_id
+         JOIN events e ON e.id = p.event_id
          LEFT JOIN venues v ON v.id = p.venue_id
-         WHERE p.id IN (${placeholders})`,
+         WHERE p.id IN (${placeholders})
+           AND p.event_id = ?
+           AND ${publicEventStatusSql("e")}
+           AND (e.reveal_mode = 0 OR p.is_announced = 1)`,
       )
-        .bind(...performance_ids)
+        .bind(...performance_ids, row.event_id)
         .all();
 
       const byId = new Map((detail.results || []).map((r) => [r.performance_id, r]));
