@@ -319,7 +319,7 @@ Canonical active roadmap: `docs/ROADMAP.md`. Use it for handoffs between Claude,
 - **Storage**: Cloudflare R2 (band photos)
 - **Email**: Postmark/Resend/MailChannels
 - **Tests**: Vitest (unit, frontend), Playwright (E2E + a11y + visual regression)
-- **CI/CD**: GitHub Actions (12 workflows), CodeQL, Dependabot
+- **CI/CD**: GitHub Actions (13 workflows), CodeQL, Dependabot
 
 ---
 
@@ -675,9 +675,9 @@ Audit rows for the API-key routes otherwise go in the **same `DB.batch`** as the
 
 **Use the cancel toggle (`is_cancelled = 1`). Do not un-announce, and do not delete the row.**
 
-`is_announced = 0` is **not** a way to hide a set. Every public read path **that returns per-performance rows** guards with `AND (e.reveal_mode = 0 OR p.is_announced = 1)` — **8 files**, and three of them bind `reveal_mode` as a parameter (`AND (? = 0 OR p.is_announced = 1)`): `api/events/[id]/details.js`, `api/schedule.js`, and `event/[slug].js`, which uses both forms. Grep for `is_announced = 1` rather than the literal `e.reveal_mode` form or you will undercount:
+`is_announced = 0` is **not** a way to hide a set. Every public read path **that returns per-performance rows** guards with `AND (e.reveal_mode = 0 OR p.is_announced = 1)` — **9 files**, and three of them bind `reveal_mode` as a parameter (`AND (? = 0 OR p.is_announced = 1)`): `api/events/[id]/details.js`, `api/schedule.js`, and `event/[slug].js`, which uses both forms. Grep for `is_announced = 1` rather than the literal `e.reveal_mode` form or you will undercount:
 
-`api/bands/[name].js`, `api/bands/stats/[name].js`, `api/events/[id]/details.js`, `api/events/timeline.js`, `api/feeds/ical.js`, `api/schedule.js`, `api/venues/[id].js`, `event/[slug].js`
+`api/bands/[name].js`, `api/bands/[name]/stage-mates.js`, `api/bands/stats/[name].js`, `api/events/[id]/details.js`, `api/events/timeline.js`, `api/feeds/ical.js`, `api/schedule.js`, `api/venues/[id].js`, `event/[slug].js`
 
 On a `reveal_mode = 0` event the left side short-circuits **true**, so `is_announced` is never consulted for visibility. The set stays on the schedule, the artist page, the venue page and the iCal feed. Nothing errors; the failure is invisible until fans arrive at a dark venue.
 
