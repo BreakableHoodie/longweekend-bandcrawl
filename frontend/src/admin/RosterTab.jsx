@@ -722,7 +722,7 @@ export default function RosterTab({ showToast, readOnly = false }) {
                       // column's actual rendered width (w-12 = 3rem) only when that
                       // column exists. Hardcoding left-12 unconditionally would leave
                       // a gap (or worse, overlap) when readOnly hides the checkbox.
-                      stickyClassName={`sticky z-10 bg-bg-navy ${readOnly ? 'left-0' : 'left-12'}`}
+                      stickyClassName={`sticky z-10 after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-white/40 after:content-[''] bg-bg-navy ${readOnly ? 'left-0' : 'left-12'}`}
                     />
                     <FilterableHeader
                       sortKey="origin"
@@ -814,7 +814,7 @@ export default function RosterTab({ showToast, readOnly = false }) {
                       renderColumnFilterPanel={renderColumnFilterPanel}
                     />
                     {!readOnly && (
-                      <th className="sticky right-0 z-10 bg-bg-navy border-l border-white/20 px-3 py-3 text-right text-white font-semibold whitespace-nowrap align-middle">
+                      <th className="sticky right-0 z-10 after:absolute after:inset-y-0 after:left-0 after:w-px after:bg-white/40 after:content-[''] bg-bg-navy px-3 py-3 text-right text-white font-semibold whitespace-nowrap align-middle">
                         Actions
                       </th>
                     )}
@@ -866,7 +866,7 @@ export default function RosterTab({ showToast, readOnly = false }) {
                           </td>
                         )}
                         <td
-                          className={`sticky ${readOnly ? 'left-0' : 'left-12'} z-10 border-r border-white/20 px-3 py-3 text-white font-medium ${stickyCellClassName}`}
+                          className={`sticky ${readOnly ? 'left-0' : 'left-12'} z-10 after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-white/40 after:content-[''] px-3 py-3 text-white font-medium ${stickyCellClassName}`}
                         >
                           <div className="flex items-center gap-2">
                             <a
@@ -908,7 +908,7 @@ export default function RosterTab({ showToast, readOnly = false }) {
                         </td>
                         {!readOnly && (
                           <td
-                            className={`sticky right-0 z-10 border-l border-white/20 px-3 py-3 ${stickyCellClassName}`}
+                            className={`sticky right-0 z-10 after:absolute after:inset-y-0 after:left-0 after:w-px after:bg-white/40 after:content-[''] px-3 py-3 ${stickyCellClassName}`}
                           >
                             <div className="flex justify-end gap-2">
                               <button
