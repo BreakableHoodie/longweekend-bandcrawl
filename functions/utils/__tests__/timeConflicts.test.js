@@ -719,7 +719,7 @@ describe("detectBulkConflicts — D1's 100-parameter ceiling (#1131 review)", ()
     const target = insertVenue(rawDb, { name: "Bind Target" });
 
     const movers = [];
-    for (let i = 0; i < 60; i += 1) {
+    for (let i = 0; i < 100; i += 1) {
       const event = insertEvent(rawDb, {
         name: `Bind Event ${i}`,
         slug: `bind-evt-${i}`,
@@ -752,6 +752,14 @@ describe("detectBulkConflicts — D1's 100-parameter ceiling (#1131 review)", ()
       action: "move_venue",
       bandIds: movers.map((m) => m.id),
       params: { venue_id: target.id },
+    });
+    // change_time is the SIBLING path and had the identical ceiling: it bound
+    // venue + event + every band id, so 99 bands was 101 parameters. The review
+    // flagged move_venue only; this covers both.
+    await detectBulkConflicts(env, {
+      action: "change_time",
+      bandIds: movers.map((m) => m.id),
+      params: { start_time: "21:00" },
     });
 
     expect(bindCounts.length, "no query ran, so this proves nothing").toBeGreaterThan(0);

@@ -153,6 +153,11 @@ export async function detectBulkConflicts(env, { action, bandIds, params }) {
   // performance_date, so a batch member's festival day is just its stored value.
   const festivalDayOf = (row) => row.performance_date || row.event_date;
 
+  // Shared by both action branches: each excludes the batch's own members in
+  // JS rather than with a SQL `p.id NOT IN (...)`, because binding every band
+  // id put both queries at 2 + N parameters and D1's ceiling is 100.
+  const batchIds = new Set(bandIds);
+
   if (action === "move_venue") {
     const { venue_id } = params;
 
@@ -185,7 +190,6 @@ export async function detectBulkConflicts(env, { action, bandIds, params }) {
     // equivalent: they are excluded so batch members are invisible to the
     // per-band check below and get compared pairwise instead.
     const EVENT_ID_CHUNK = 99; // + venue_id = 100, D1's limit exactly
-    const batchIds = new Set(bandIds);
     const eventIds = [...new Set(bandResults.map((b) => b.event_id))];
     const venuePerformancesByEvent = new Map();
     for (const id of eventIds) venuePerformancesByEvent.set(id, []);
@@ -284,11 +288,18 @@ export async function detectBulkConflicts(env, { action, bandIds, params }) {
            FROM performances p
            JOIN band_profiles bp ON p.band_profile_id = bp.id
            JOIN events e ON p.event_id = e.id
-           WHERE p.venue_id = ? AND p.event_id = ? AND p.id NOT IN (${placeholders})`,
+           WHERE p.venue_id = ? AND p.event_id = ?`,
         )
-          .bind(band.venue_id, band.event_id, ...bandIds)
+          .bind(band.venue_id, band.event_id)
           .all();
-        changeTimeCache.set(cacheKey, rows.results || []);
+        // Exclude the batch's own members in JS, not SQL -- same reason as the
+        // move_venue path above: binding every band id put this query at 2 + N
+        // parameters, so 99 bands exceeded D1's ceiling of 100 and the route
+        // 500'd. CodeRabbit flagged move_venue; this is its sibling.
+        changeTimeCache.set(
+          cacheKey,
+          (rows.results || []).filter((r) => !batchIds.has(r.id)),
+        );
       }
 
       const existing = changeTimeCache.get(cacheKey);
