@@ -36,7 +36,13 @@ function trackedManifests() {
     cwd: repoRoot,
     encoding: "utf8",
   });
-  return out.split("\n").filter((p) => p && !p.includes("node_modules/"));
+  // Same trap as enginesFloor.test.js: `git ls-files` lists TRACKED files,
+  // including ones deleted from the working tree but not yet staged. Reading
+  // one throws ENOENT and fails the gate for a reason unrelated to the check.
+  return out
+    .split("\n")
+    .filter((p) => p && !p.includes("node_modules/"))
+    .filter((p) => existsSync(join(repoRoot, p)));
 }
 
 const manifests = trackedManifests();

@@ -17,7 +17,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
@@ -39,12 +39,21 @@ function trackedJsFiles() {
   // Listing extensions that do not exist yet costs nothing and removes the
   // failure mode where adding the first file of a type silently drops it out of
   // the scan.
-  return execFileSync("git", ["ls-files", "*.js", "*.mjs", "*.cjs", "*.jsx", "*.ts", "*.tsx", "*.mts", "*.cts"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  })
-    .split("\n")
-    .filter((p) => p && !p.includes("node_modules/"));
+  return (
+    execFileSync("git", ["ls-files", "*.js", "*.mjs", "*.cjs", "*.jsx", "*.ts", "*.tsx", "*.mts", "*.cts"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter((p) => p && !p.includes("node_modules/"))
+      // `git ls-files` lists TRACKED files, which includes ones deleted from the
+      // working tree but not yet staged -- a legitimate mid-refactor state. Without
+      // this the scan hands a missing path to readFileSync and the gate fails for a
+      // reason unrelated to what it checks. CLAUDE.md records the same trap for the
+      // Makefile lint recipes, which guard it with `[ -f "$f" ]`; this is the JS
+      // equivalent, and it was found by hitting it.
+      .filter((p) => existsSync(join(repoRoot, p)))
+  );
 }
 
 const declared = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).engines?.node;

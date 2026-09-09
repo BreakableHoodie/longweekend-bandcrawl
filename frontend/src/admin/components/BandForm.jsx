@@ -518,9 +518,15 @@ export default function BandForm({
           <label htmlFor="band-website" className="block text-white mb-2 text-sm">
             Website <span className="text-gray-400 text-xs ml-2">(optional)</span>
           </label>
+          {/* type=text, NOT url, on every link field. The browser's native url
+              validation demands a scheme, so it rejected a bare handle BEFORE the
+              request was sent -- which made #1066's handle support unreachable on
+              all seven fields. Instagram worked only because it was never url-typed.
+              The server validates these and returns a message naming what the field
+              accepts. #1064. */}
           <input
             id="band-website"
-            type="url"
+            type="text"
             name="website"
             value={formData.website || ''}
             onChange={onChange}
@@ -552,7 +558,7 @@ export default function BandForm({
           </label>
           <input
             id="band-bandcamp"
-            type="url"
+            type="text"
             name="bandcamp"
             value={formData.bandcamp || ''}
             onChange={onChange}
@@ -568,7 +574,7 @@ export default function BandForm({
           </label>
           <input
             id="band-facebook"
-            type="url"
+            type="text"
             name="facebook"
             value={formData.facebook || ''}
             onChange={onChange}
@@ -584,7 +590,7 @@ export default function BandForm({
           </label>
           <input
             id="band-youtube"
-            type="url"
+            type="text"
             name="youtube"
             value={formData.youtube || ''}
             onChange={onChange}
@@ -600,7 +606,7 @@ export default function BandForm({
           </label>
           <input
             id="band-spotify"
-            type="url"
+            type="text"
             name="spotify"
             value={formData.spotify || ''}
             onChange={onChange}
@@ -616,7 +622,7 @@ export default function BandForm({
           </label>
           <input
             id="band-apple-music"
-            type="url"
+            type="text"
             name="apple_music"
             value={formData.apple_music || ''}
             onChange={onChange}
@@ -632,7 +638,7 @@ export default function BandForm({
           </label>
           <input
             id="band-linktree"
-            type="url"
+            type="text"
             name="linktree"
             value={formData.linktree || ''}
             onChange={onChange}

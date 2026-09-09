@@ -260,21 +260,25 @@ const BAND_LINK_FIELD_CONFIG = {
     maxLength: FIELD_LIMITS.socialHandle.max,
     label: "Instagram",
     handleToUrl: (h) => `https://instagram.com/${h}`,
+    domain: "instagram.com",
   },
   bandcamp: {
     maxLength: FIELD_LIMITS.bandUrl.max,
     label: "Bandcamp URL",
     handleToUrl: (h) => `https://${h}.bandcamp.com`,
+    domain: "bandcamp.com",
   },
   facebook: {
     maxLength: FIELD_LIMITS.bandUrl.max,
     label: "Facebook URL",
     handleToUrl: (h) => `https://facebook.com/${h}`,
+    domain: "facebook.com",
   },
   youtube: {
     maxLength: FIELD_LIMITS.bandUrl.max,
     label: "YouTube URL",
     handleToUrl: (h) => `https://youtube.com/@${h}`,
+    domain: "youtube.com",
   },
   spotify: { maxLength: FIELD_LIMITS.bandUrl.max, label: "Spotify URL" },
   apple_music: { maxLength: FIELD_LIMITS.bandUrl.max, label: "Apple Music URL" },
@@ -282,6 +286,7 @@ const BAND_LINK_FIELD_CONFIG = {
     maxLength: FIELD_LIMITS.bandUrl.max,
     label: "Linktree URL",
     handleToUrl: (h) => `https://linktr.ee/${h}`,
+    domain: "linktr.ee",
   },
 };
 
@@ -304,7 +309,7 @@ const BAND_LINK_FIELD_CONFIG = {
  * @returns {string|null} Canonical URL or null
  */
 function normalizeArtistLinkField(value, config) {
-  const { maxLength, label, handleToUrl } = config;
+  const { maxLength, label, handleToUrl, domain } = config;
 
   const text = sanitizeOptionalText(value, maxLength, label);
   if (!text) {
@@ -330,9 +335,40 @@ function normalizeArtistLinkField(value, config) {
   const trimmed = text.replace(/^\/+/, "");
   const looksLikePath = trimmed.includes("/");
 
-  if (!handleToUrl || looksLikePath) {
+  // A scheme-less value that ALREADY names this platform's own domain is a URL,
+  // not a handle. Without this, `femto519.bandcamp.com` was expanded a SECOND
+  // time into `https://femto519.bandcamp.com.bandcamp.com/` -- stored silently,
+  // no error, a dead link. #1064.
+  //
+  // It only bites on SUBDOMAIN platforms. The path-based ones (instagram,
+  // facebook, youtube, linktree) are already caught by the slash rule above,
+  // because `linktr.ee/femto519` contains one. Bandcamp is the only field where
+  // the platform's own domain arrives with no slash in it.
+  //
+  // Deliberately matched on the HOST, not on "contains a dot": handles here
+  // routinely contain dots -- this site's own Instagram handle is `settimes.ca`
+  // -- and a dot rule would turn that into https://settimes.ca/, which is the
+  // bug #1066 fixed. `settimes.ca` does not end in `instagram.com`, so it stays
+  // a handle.
+  // Split on the query and fragment delimiters too, not just "/". A host
+  // copied out of a browser arrives as `femto519.bandcamp.com?utm_source=x`,
+  // and leaving `?...` in the host makes it match no domain -- so the value
+  // fell through to the handle path and was rejected outright, while the
+  // identical string WITH `https://` was accepted and had its tracking
+  // parameters stripped. Same link, two answers, depending on a prefix the
+  // owner is being told they do not need. Caught by CodeRabbit on #1064.
+  const host = trimmed.split(/[/?#]/, 1)[0].toLowerCase();
+  const isOwnDomain = Boolean(domain) && (host === domain || host.endsWith(`.${domain}`));
+
+  if (!handleToUrl || looksLikePath || isOwnDomain) {
     const candidate = trimmed;
-    if (!candidate.split("/")[0].includes(".")) {
+    // Same split as the host above, and for the same reason. Splitting on "/"
+    // alone let a dot ANYWHERE after "?" or "#" satisfy this check, so
+    // `nodot?a=b.c` -- which has no dot in its host at all -- passed and was
+    // stored as `https://nodot/?a=b.c`: a dead link, written silently, which is
+    // precisely the failure this check exists to prevent. Found by sweeping the
+    // host-split class after CodeRabbit flagged the first instance.
+    if (!candidate.split(/[/?#]/, 1)[0].includes(".")) {
       throw new Error(`${label} must be a URL — start with https:// or provide the full address`);
     }
     const normalized = normalizeHttpUrl(`https://${candidate}`);
