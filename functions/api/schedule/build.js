@@ -3,6 +3,7 @@
 // Body: { event_id: number, band_ids?: number[], performance_ids?: number[], user_session: string }
 
 import { parseJsonObjectBody } from "../../utils/request.js";
+import { publicEventStatusSql } from "../../utils/eventVisibility.js";
 
 const MAX_USER_SESSION_LENGTH = 128;
 const MAX_PERFORMANCE_IDS = 50;
@@ -64,7 +65,58 @@ export async function onRequestPost(context) {
       });
     }
 
-    const statements = performanceIds.map((performanceId) =>
+    // Resolve the caller's ids down to the ones that actually belong to THIS
+    // event and are publicly visible, then silently drop the rest (#1135).
+    //
+    // Two defects, one fix:
+    //
+    // 1. EXISTENCE ORACLE. A nonexistent id used to reach the INSERT and raise
+    //    `FOREIGN KEY constraint failed` -- which does not contain the string
+    //    "performance_id" that the catch below tests for, so it was rethrown
+    //    and became a 500, while a valid id returned 200. Two states, over
+    //    every performance id in the database, unauthenticated, behind a
+    //    rate limiter that fails OPEN.
+    //
+    //    Dropping silently REMOVES the oracle rather than moving it: unknown,
+    //    foreign and non-public ids are now indistinguishable from each other
+    //    and from a valid one. Same reasoning as #983's /band/<slug> gate --
+    //    a refusal that only fires for real rows is itself the disclosure.
+    //    follow-batch.js already drops unknown ids for the same reason.
+    //
+    // 2. WRONG ROWS WRITTEN. Without `p.event_id = ?` it recorded builds for
+    //    performances belonging to some OTHER event, under whatever event_id
+    //    the caller sent. Those rows feed `schedule_count` in the admin event
+    //    metrics, so this was an integrity bug as much as a disclosure one --
+    //    any event's build count could be inflated with unrelated ids.
+    //
+    // 50 ids max (MAX_PERFORMANCE_IDS) + 1 for event_id = 51 binds, inside
+    // D1's ceiling of 100.
+    const idPlaceholders = performanceIds.map(() => "?").join(",");
+    const visible = await DB.prepare(
+      `SELECT p.id
+       FROM performances p
+       JOIN events e ON e.id = p.event_id
+       WHERE p.id IN (${idPlaceholders})
+         AND p.event_id = ?
+         AND ${publicEventStatusSql("e")}
+         AND (e.reveal_mode = 0 OR p.is_announced = 1)`,
+    )
+      .bind(...performanceIds, eventId)
+      .all();
+
+    const allowedIds = (visible.results || []).map((r) => r.id);
+
+    // Nothing resolved: succeed anyway, identically to the case where
+    // everything did. Returning a different status here would rebuild the
+    // oracle this filter just removed.
+    if (allowedIds.length === 0) {
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const statements = allowedIds.map((performanceId) =>
       DB.prepare(
         `
         INSERT OR IGNORE INTO schedule_builds (event_id, performance_id, user_session)
@@ -80,7 +132,7 @@ export async function onRequestPost(context) {
         throw error;
       }
 
-      const legacyStatements = performanceIds.map((performanceId) =>
+      const legacyStatements = allowedIds.map((performanceId) =>
         DB.prepare(
           `
           INSERT OR IGNORE INTO schedule_builds (event_id, band_id, user_session)
