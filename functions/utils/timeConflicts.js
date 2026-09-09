@@ -164,19 +164,33 @@ export async function detectBulkConflicts(env, { action, bandIds, params }) {
     // Fetch existing performances at the target venue per event, excluding all
     // batch members so they are invisible to the per-band check below (they are
     // handled pairwise instead to avoid double-reporting).
+    // ONE query for every event in the batch, grouped in JS -- not one query per
+    // event. `band_ids` on the bulk PATCH/DELETE path is validated only as an id
+    // array capped at MAX_BULK_BAND_IDS (200) with NO event_id constraint, so a
+    // selection spanning many events is legal and the old loop issued one
+    // sequential awaited query per distinct event. #1130.
+    //
+    // The sibling change_time path below already memoizes the same query by
+    // (venue_id, event_id); this is the same problem solved one level up.
     const eventIds = [...new Set(bandResults.map((b) => b.event_id))];
     const venuePerformancesByEvent = new Map();
-    for (const eventId of eventIds) {
+    if (eventIds.length > 0) {
+      const eventPh = eventIds.map(() => "?").join(", ");
       const rows = await env.DB.prepare(
-        `SELECT p.id, p.start_time, p.end_time, p.performance_date, bp.name, e.date AS event_date
+        `SELECT p.id, p.event_id, p.start_time, p.end_time, p.performance_date, bp.name, e.date AS event_date
          FROM performances p
          JOIN band_profiles bp ON p.band_profile_id = bp.id
          JOIN events e ON p.event_id = e.id
-         WHERE p.venue_id = ? AND p.event_id = ? AND p.id NOT IN (${placeholders})`,
+         WHERE p.venue_id = ? AND p.event_id IN (${eventPh}) AND p.id NOT IN (${placeholders})`,
       )
-        .bind(venue_id, eventId, ...bandIds)
+        .bind(venue_id, ...eventIds, ...bandIds)
         .all();
-      venuePerformancesByEvent.set(eventId, rows.results || []);
+      // Seed every requested event so a lookup for an event with no existing
+      // performances still returns [] rather than undefined.
+      for (const id of eventIds) venuePerformancesByEvent.set(id, []);
+      for (const row of rows.results || []) {
+        venuePerformancesByEvent.get(row.event_id)?.push(row);
+      }
     }
 
     // Check each batch member against existing performances at the target venue.

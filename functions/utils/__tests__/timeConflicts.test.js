@@ -541,3 +541,116 @@ describe("detectBulkConflicts — festival-day scoping (#551)", () => {
     expect(conflicts).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// detectBulkConflicts — batches spanning MULTIPLE events (#1130)
+//
+// The bulk PATCH/DELETE path validates `band_ids` only as an id array capped at
+// 200, with NO event_id constraint, so a selection spanning several events is
+// legal. move_venue used to issue one sequential query PER distinct event; it
+// now issues one query for all of them and groups in JS.
+//
+// These tests exist because the existing suite passed under both shapes: every
+// other fixture here seeds a single event, so nothing could tell a per-event
+// loop from a batched query.
+// ---------------------------------------------------------------------------
+
+describe("detectBulkConflicts — batches spanning multiple events (#1130)", () => {
+  it("detects conflicts in EVERY event of a multi-event batch, not just the first", async () => {
+    const { env, rawDb } = createTestEnv();
+    const target = insertVenue(rawDb, { name: "Shared Target 1130" });
+    const source = insertVenue(rawDb, { name: "Source 1130" });
+
+    const eventA = insertEvent(rawDb, { name: "Event A 1130", slug: "evt-a-1130", date: "2026-08-01" });
+    const eventB = insertEvent(rawDb, { name: "Event B 1130", slug: "evt-b-1130", date: "2026-08-02" });
+
+    // One mover per event, both at the same clock time, both moving to `target`.
+    const moverA = insertBand(rawDb, {
+      name: "Mover A",
+      event_id: eventA.id,
+      venue_id: source.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+    const moverB = insertBand(rawDb, {
+      name: "Mover B",
+      event_id: eventB.id,
+      venue_id: source.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+
+    // An occupant already at `target` in EACH event, overlapping the movers.
+    insertBand(rawDb, {
+      name: "Occupant A",
+      event_id: eventA.id,
+      venue_id: target.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+    insertBand(rawDb, {
+      name: "Occupant B",
+      event_id: eventB.id,
+      venue_id: target.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+
+    const conflicts = await detectBulkConflicts(env, {
+      action: "move_venue",
+      bandIds: [moverA.id, moverB.id],
+      params: { venue_id: target.id },
+    });
+
+    const names = conflicts.map((c) => c.message).join(" | ");
+    // Both events must be represented. A per-event loop that only ran for the
+    // first event would report Occupant A and miss Occupant B entirely.
+    expect(names, `both events must contribute a conflict, got: ${names}`).toContain("Occupant A");
+    expect(names, `both events must contribute a conflict, got: ${names}`).toContain("Occupant B");
+  });
+
+  it("returns no conflict for an event in the batch that has no occupant", async () => {
+    const { env, rawDb } = createTestEnv();
+    const target = insertVenue(rawDb, { name: "Empty Target 1130" });
+    const source = insertVenue(rawDb, { name: "Source2 1130" });
+
+    const eventA = insertEvent(rawDb, { name: "Event C 1130", slug: "evt-c-1130", date: "2026-08-01" });
+    const eventB = insertEvent(rawDb, { name: "Event D 1130", slug: "evt-d-1130", date: "2026-08-02" });
+
+    const moverA = insertBand(rawDb, {
+      name: "Mover C",
+      event_id: eventA.id,
+      venue_id: source.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+    const moverB = insertBand(rawDb, {
+      name: "Mover D",
+      event_id: eventB.id,
+      venue_id: source.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+    // Only event A has an occupant at the target.
+    insertBand(rawDb, {
+      name: "Occupant C",
+      event_id: eventA.id,
+      venue_id: target.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+
+    const conflicts = await detectBulkConflicts(env, {
+      action: "move_venue",
+      bandIds: [moverA.id, moverB.id],
+      params: { venue_id: target.id },
+    });
+
+    // Event B has no occupant, so its mover must produce nothing — this is the
+    // case the "seed every requested event with []" line exists for; without it
+    // the lookup returns undefined.
+    const forB = conflicts.filter((c) => c.band_id === moverB.id);
+    expect(forB, `event with no occupant must yield no conflict, got ${JSON.stringify(forB)}`).toEqual([]);
+    expect(conflicts.some((c) => c.band_id === moverA.id)).toBe(true);
+  });
+});
