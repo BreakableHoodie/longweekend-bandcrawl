@@ -96,13 +96,11 @@ describe("computeNewEndTime", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // checkConflicts — single create/update conflict check (#540)
 //
 // Shared by the admin create (bands.js) and update (bands/[id].js) write
 // paths. Day-scoped since #540: same venue + clock time on different festival
 // days is a distinct slot, not a conflict.
-// ---------------------------------------------------------------------------
 
 describe("checkConflicts", () => {
   function fixture() {
@@ -260,7 +258,6 @@ describe("checkConflicts", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // detectBulkConflicts — festival-day scoping (#551)
 //
 // #540 day-scoped the single create/update conflict check (checkConflicts, now
@@ -270,7 +267,6 @@ describe("checkConflicts", () => {
 // would false-conflict against a different festival day. These tests cover
 // both action branches (move_venue, change_time) across both comparison sites
 // (batch member vs. existing performance, and pairwise within the batch).
-// ---------------------------------------------------------------------------
 
 describe("detectBulkConflicts — festival-day scoping (#551)", () => {
   function multiDayFixture() {
@@ -539,5 +535,276 @@ describe("detectBulkConflicts — festival-day scoping (#551)", () => {
       params: { start_time: "20:00" },
     });
     expect(conflicts).toEqual([]);
+  });
+});
+
+// detectBulkConflicts — batches spanning MULTIPLE events (#1130)
+//
+// The bulk PATCH/DELETE path validates `band_ids` only as an id array capped at
+// 200, with NO event_id constraint, so a selection spanning several events is
+// legal. move_venue used to issue one sequential query PER distinct event; it
+// now issues one query for all of them and groups in JS.
+//
+// These tests exist because the existing suite passed under both shapes: every
+// other fixture here seeds a single event, so nothing could tell a per-event
+// loop from a batched query.
+
+describe("detectBulkConflicts — batches spanning multiple events (#1130)", () => {
+  it("detects conflicts in EVERY event of a multi-event batch, not just the first", async () => {
+    const { env, rawDb } = createTestEnv();
+    const target = insertVenue(rawDb, { name: "Shared Target 1130" });
+    const source = insertVenue(rawDb, { name: "Source 1130" });
+
+    const eventA = insertEvent(rawDb, { name: "Event A 1130", slug: "evt-a-1130", date: "2026-08-01" });
+    const eventB = insertEvent(rawDb, { name: "Event B 1130", slug: "evt-b-1130", date: "2026-08-02" });
+
+    // One mover per event, both at the same clock time, both moving to `target`.
+    const moverA = insertBand(rawDb, {
+      name: "Mover A",
+      event_id: eventA.id,
+      venue_id: source.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+    const moverB = insertBand(rawDb, {
+      name: "Mover B",
+      event_id: eventB.id,
+      venue_id: source.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+
+    // An occupant already at `target` in EACH event, overlapping the movers.
+    insertBand(rawDb, {
+      name: "Occupant A",
+      event_id: eventA.id,
+      venue_id: target.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+    insertBand(rawDb, {
+      name: "Occupant B",
+      event_id: eventB.id,
+      venue_id: target.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+
+    const conflicts = await detectBulkConflicts(env, {
+      action: "move_venue",
+      bandIds: [moverA.id, moverB.id],
+      params: { venue_id: target.id },
+    });
+
+    const names = conflicts.map((c) => c.message).join(" | ");
+    // Both events must be represented. A per-event loop that only ran for the
+    // first event would report Occupant A and miss Occupant B entirely.
+    expect(names, `both events must contribute a conflict, got: ${names}`).toContain("Occupant A");
+    expect(names, `both events must contribute a conflict, got: ${names}`).toContain("Occupant B");
+  });
+
+  it("returns no conflict for an event in the batch that has no occupant", async () => {
+    const { env, rawDb } = createTestEnv();
+    const target = insertVenue(rawDb, { name: "Empty Target 1130" });
+    const source = insertVenue(rawDb, { name: "Source2 1130" });
+
+    const eventA = insertEvent(rawDb, { name: "Event C 1130", slug: "evt-c-1130", date: "2026-08-01" });
+    const eventB = insertEvent(rawDb, { name: "Event D 1130", slug: "evt-d-1130", date: "2026-08-02" });
+
+    const moverA = insertBand(rawDb, {
+      name: "Mover C",
+      event_id: eventA.id,
+      venue_id: source.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+    const moverB = insertBand(rawDb, {
+      name: "Mover D",
+      event_id: eventB.id,
+      venue_id: source.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+    // Only event A has an occupant at the target.
+    insertBand(rawDb, {
+      name: "Occupant C",
+      event_id: eventA.id,
+      venue_id: target.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+
+    const conflicts = await detectBulkConflicts(env, {
+      action: "move_venue",
+      bandIds: [moverA.id, moverB.id],
+      params: { venue_id: target.id },
+    });
+
+    // Event B has no occupant, so its mover must produce nothing — this is the
+    // case the "seed every requested event with []" line exists for; without it
+    // the lookup returns undefined.
+    const forB = conflicts.filter((c) => c.band_id === moverB.id);
+    expect(forB, `event with no occupant must yield no conflict, got ${JSON.stringify(forB)}`).toEqual([]);
+    expect(conflicts.some((c) => c.band_id === moverA.id)).toBe(true);
+  });
+});
+
+describe("detectBulkConflicts — D1's 100-parameter ceiling (#1131 review)", () => {
+  // A legal batch: MAX_BULK_BAND_IDS is 200 and nothing constrains band_ids to
+  // one event, so 50 performances across 50 events is ordinary input.
+  //
+  // Binding venue_id + every event id + every band id is 1 + 2N parameters --
+  // 101 here, which D1 rejects outright, so the bulk route answered 500 before
+  // touching anything. The pre-batched code had the same ceiling at 99 bands.
+  //
+  // This test is the reason the exclusion moved out of SQL and the event ids are
+  // chunked: it fails with a parameter error if either is undone.
+  it("handles 50 performances across 50 events without exceeding the bind limit", async () => {
+    const { env, rawDb } = createTestEnv();
+    const source = insertVenue(rawDb, { name: "Ceiling Source" });
+    const target = insertVenue(rawDb, { name: "Ceiling Target" });
+
+    const movers = [];
+    for (let i = 0; i < 50; i += 1) {
+      const event = insertEvent(rawDb, {
+        name: `Ceiling Event ${i}`,
+        slug: `ceiling-evt-${i}`,
+        date: "2026-08-01",
+      });
+      movers.push(
+        insertBand(rawDb, {
+          name: `Ceiling Mover ${i}`,
+          event_id: event.id,
+          venue_id: source.id,
+          start_time: "20:00",
+          end_time: "21:00",
+        }),
+      );
+      // An occupant at the target in each event, so every one of the 50 must be
+      // seen -- a chunking bug that dropped a chunk would lose conflicts here.
+      insertBand(rawDb, {
+        name: `Ceiling Occupant ${i}`,
+        event_id: event.id,
+        venue_id: target.id,
+        start_time: "20:00",
+        end_time: "21:00",
+      });
+    }
+
+    const conflicts = await detectBulkConflicts(env, {
+      action: "move_venue",
+      bandIds: movers.map((m) => m.id),
+      params: { venue_id: target.id },
+    });
+
+    // Every mover conflicts with its own event's occupant. Fewer means a chunk
+    // was dropped.
+    expect(conflicts.length).toBe(50);
+    const ids = new Set(conflicts.map((c) => c.band_id));
+    expect(ids.size, "each mover must be reported exactly once").toBe(50);
+  });
+
+  // 150 ids, not 100. MAX_BULK_BAND_IDS is 200, and the query that loads the
+  // batch binds ONE PARAMETER PER ID -- so it breaks at 101. A fixture of exactly
+  // 100 sits at the limit and cannot detect it, which is how that third site
+  // survived a sweep of the two action branches (#1131 review).
+  //
+  // THE CEILING ITSELF, asserted by counting binds rather than by running the
+  // query -- because running it cannot fail here. The unit harness is
+  // better-sqlite3, whose variable limit is ~32766; D1's is 100. A 101-parameter
+  // query passes locally and 500s in production, so an execution test is
+  // VACUOUS for this property. Verified: reinstating the 1+2N binding leaves the
+  // 50-event test above green.
+  //
+  // Counting the arguments actually passed to .bind() is the only assertion here
+  // that can fail for the right reason.
+  it("never binds more than 100 parameters in one query — D1's ceiling", async () => {
+    const { env, rawDb } = createTestEnv();
+    const source = insertVenue(rawDb, { name: "Bind Source" });
+    const target = insertVenue(rawDb, { name: "Bind Target" });
+
+    const movers = [];
+    for (let i = 0; i < 150; i += 1) {
+      const event = insertEvent(rawDb, {
+        name: `Bind Event ${i}`,
+        slug: `bind-evt-${i}`,
+        date: "2026-08-01",
+      });
+      movers.push(
+        insertBand(rawDb, {
+          name: `Bind Mover ${i}`,
+          event_id: event.id,
+          venue_id: source.id,
+          start_time: "20:00",
+          end_time: "21:00",
+        }),
+      );
+    }
+
+    const bindCounts = [];
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = (sql) => {
+      const stmt = realPrepare(sql);
+      const realBind = stmt.bind.bind(stmt);
+      stmt.bind = (...args) => {
+        bindCounts.push(args.length);
+        return realBind(...args);
+      };
+      return stmt;
+    };
+
+    await detectBulkConflicts(env, {
+      action: "move_venue",
+      bandIds: movers.map((m) => m.id),
+      params: { venue_id: target.id },
+    });
+    // change_time is the SIBLING path and had the identical ceiling: it bound
+    // venue + event + every band id, so 99 bands was 101 parameters. The review
+    // flagged move_venue only; this covers both.
+    await detectBulkConflicts(env, {
+      action: "change_time",
+      bandIds: movers.map((m) => m.id),
+      params: { start_time: "21:00" },
+    });
+
+    expect(bindCounts.length, "no query ran, so this proves nothing").toBeGreaterThan(0);
+    const worst = Math.max(...bindCounts);
+    expect(worst, `largest bind was ${worst} parameters; D1 rejects above 100`).toBeLessThanOrEqual(100);
+  });
+
+  // The batch's own members are excluded so they are compared pairwise instead
+  // of against themselves. That exclusion moved from SQL to JS; this asserts it
+  // still happens.
+  it("never reports a batch member as its own conflict", async () => {
+    const { env, rawDb } = createTestEnv();
+    const source = insertVenue(rawDb, { name: "Self Source" });
+    const target = insertVenue(rawDb, { name: "Self Target" });
+    const event = insertEvent(rawDb, { name: "Self Event", slug: "self-evt", date: "2026-08-01" });
+
+    const a = insertBand(rawDb, {
+      name: "Self A",
+      event_id: event.id,
+      venue_id: target.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+    const b = insertBand(rawDb, {
+      name: "Self B",
+      event_id: event.id,
+      venue_id: source.id,
+      start_time: "20:00",
+      end_time: "21:00",
+    });
+
+    const conflicts = await detectBulkConflicts(env, {
+      action: "move_venue",
+      bandIds: [a.id, b.id],
+      params: { venue_id: target.id },
+    });
+
+    const messages = conflicts.map((c) => c.message).join(" | ");
+    expect(messages, `a batch member must not appear as an existing occupant: ${messages}`).not.toContain(
+      "Self A" + '" at the new venue',
+    );
   });
 });

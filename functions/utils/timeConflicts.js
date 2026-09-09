@@ -128,22 +128,34 @@ export async function detectBulkConflicts(env, { action, bandIds, params }) {
   if (!bandIds || bandIds.length === 0) return [];
 
   const conflicts = [];
-  const placeholders = bandIds.map(() => "?").join(",");
+  // D1 binds at most 100 parameters per query, and `band_ids` is capped at
+  // MAX_BULK_BAND_IDS (200) -- so this query, which binds one per id, breaks at
+  // 101. It runs BEFORE the action branch, so it affects both.
+  //
+  // This is the THIRD site of the same defect in this file. The other two are in
+  // the branches below; this one is the shared prologue, which is why sweeping
+  // the branches alone missed it (#1131 review).
+  const BIND_CHUNK = 100;
+  const bandRows = [];
+  for (let i = 0; i < bandIds.length; i += BIND_CHUNK) {
+    const chunk = bandIds.slice(i, i + BIND_CHUNK);
+    const chunkPh = chunk.map(() => "?").join(",");
+    // Fetch all performance data for the batch (including archived events), then
+    // filter out archived-event rows before scheduling-conflict checks. Callers
+    // that need archived-event error messages (bulk-preview) handle those separately.
+    const page = await env.DB.prepare(
+      `SELECT p.id, p.start_time, p.end_time, p.venue_id, p.event_id, p.performance_date, bp.name, e.status AS event_status, e.date AS event_date
+       FROM performances p
+       JOIN band_profiles bp ON p.band_profile_id = bp.id
+       JOIN events e ON p.event_id = e.id
+       WHERE p.id IN (${chunkPh})`,
+    )
+      .bind(...chunk)
+      .all();
+    bandRows.push(...(page.results || []));
+  }
 
-  // Fetch all performance data for the batch (including archived events), then
-  // filter out archived-event rows before scheduling-conflict checks. Callers
-  // that need archived-event error messages (bulk-preview) handle those separately.
-  const bands = await env.DB.prepare(
-    `SELECT p.id, p.start_time, p.end_time, p.venue_id, p.event_id, p.performance_date, bp.name, e.status AS event_status, e.date AS event_date
-     FROM performances p
-     JOIN band_profiles bp ON p.band_profile_id = bp.id
-     JOIN events e ON p.event_id = e.id
-     WHERE p.id IN (${placeholders})`,
-  )
-    .bind(...bandIds)
-    .all();
-
-  const bandResults = (bands.results || []).filter((b) => b.event_status !== "archived");
+  const bandResults = bandRows.filter((b) => b.event_status !== "archived");
 
   // Festival-day scoping (#551): two sets on different festival days never
   // conflict, even at the same venue and clock time (mirrors checkConflicts in
@@ -152,6 +164,11 @@ export async function detectBulkConflicts(env, { action, bandIds, params }) {
   // conflict exactly as before. move_venue/change_time never mutate
   // performance_date, so a batch member's festival day is just its stored value.
   const festivalDayOf = (row) => row.performance_date || row.event_date;
+
+  // Shared by both action branches: each excludes the batch's own members in
+  // JS rather than with a SQL `p.id NOT IN (...)`, because binding every band
+  // id put both queries at 2 + N parameters and D1's ceiling is 100.
+  const batchIds = new Set(bandIds);
 
   if (action === "move_venue") {
     const { venue_id } = params;
@@ -164,19 +181,47 @@ export async function detectBulkConflicts(env, { action, bandIds, params }) {
     // Fetch existing performances at the target venue per event, excluding all
     // batch members so they are invisible to the per-band check below (they are
     // handled pairwise instead to avoid double-reporting).
+    // Batched, chunked, and with the exclusion done in JS -- all three matter.
+    //
+    // BATCHED because `band_ids` on the bulk PATCH/DELETE path is validated only
+    // as an id array capped at MAX_BULK_BAND_IDS (200) with NO event_id
+    // constraint, so a selection spanning many events is legal and the original
+    // code issued one sequential awaited query per distinct event (#1130).
+    //
+    // CHUNKED, and the exclusion moved OUT of SQL, because of D1's 100-parameter
+    // ceiling. Binding `venue_id` + every event id + every band id is 1 + 2N
+    // parameters: a legal batch of 50 performances across 50 events is 101 and
+    // D1 rejects the query, so bulk.js answers 500 before touching anything.
+    //
+    // The pre-batched code had the same ceiling one step further out -- it bound
+    // all band ids per query, so 99 bands was already 101 parameters. Batching
+    // lowered the threshold; it did not create it. Both are fixed here.
+    //
+    // Dropping `p.id NOT IN (...)` removes the band ids from the bind list
+    // entirely, leaving 1 + chunk. Filtering the batch's own rows out in JS is
+    // equivalent: they are excluded so batch members are invisible to the
+    // per-band check below and get compared pairwise instead.
+    const EVENT_ID_CHUNK = 99; // + venue_id = 100, D1's limit exactly
     const eventIds = [...new Set(bandResults.map((b) => b.event_id))];
     const venuePerformancesByEvent = new Map();
-    for (const eventId of eventIds) {
+    for (const id of eventIds) venuePerformancesByEvent.set(id, []);
+
+    for (let i = 0; i < eventIds.length; i += EVENT_ID_CHUNK) {
+      const chunk = eventIds.slice(i, i + EVENT_ID_CHUNK);
+      const eventPh = chunk.map(() => "?").join(", ");
       const rows = await env.DB.prepare(
-        `SELECT p.id, p.start_time, p.end_time, p.performance_date, bp.name, e.date AS event_date
+        `SELECT p.id, p.event_id, p.start_time, p.end_time, p.performance_date, bp.name, e.date AS event_date
          FROM performances p
          JOIN band_profiles bp ON p.band_profile_id = bp.id
          JOIN events e ON p.event_id = e.id
-         WHERE p.venue_id = ? AND p.event_id = ? AND p.id NOT IN (${placeholders})`,
+         WHERE p.venue_id = ? AND p.event_id IN (${eventPh})`,
       )
-        .bind(venue_id, eventId, ...bandIds)
+        .bind(venue_id, ...chunk)
         .all();
-      venuePerformancesByEvent.set(eventId, rows.results || []);
+      for (const row of rows.results || []) {
+        if (batchIds.has(row.id)) continue; // the batch's own members
+        venuePerformancesByEvent.get(row.event_id)?.push(row);
+      }
     }
 
     // Check each batch member against existing performances at the target venue.
@@ -255,11 +300,18 @@ export async function detectBulkConflicts(env, { action, bandIds, params }) {
            FROM performances p
            JOIN band_profiles bp ON p.band_profile_id = bp.id
            JOIN events e ON p.event_id = e.id
-           WHERE p.venue_id = ? AND p.event_id = ? AND p.id NOT IN (${placeholders})`,
+           WHERE p.venue_id = ? AND p.event_id = ?`,
         )
-          .bind(band.venue_id, band.event_id, ...bandIds)
+          .bind(band.venue_id, band.event_id)
           .all();
-        changeTimeCache.set(cacheKey, rows.results || []);
+        // Exclude the batch's own members in JS, not SQL -- same reason as the
+        // move_venue path above: binding every band id put this query at 2 + N
+        // parameters, so 99 bands exceeded D1's ceiling of 100 and the route
+        // 500'd. CodeRabbit flagged move_venue; this is its sibling.
+        changeTimeCache.set(
+          cacheKey,
+          (rows.results || []).filter((r) => !batchIds.has(r.id)),
+        );
       }
 
       const existing = changeTimeCache.get(cacheKey);

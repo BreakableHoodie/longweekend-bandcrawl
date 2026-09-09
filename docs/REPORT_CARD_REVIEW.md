@@ -126,6 +126,31 @@ validates zero-length sets" (three of five paths did), "these components have no
 tests" (a bad `find`), "the roster query is unbounded" (capped at 500). Post the
 correction on the issue. A confidently wrong report card is worse than none.
 
+### A markdown needs a line number, not an instinct
+
+Added after the second run (2026-09-09). Three of nine grades were marked down
+for reasons that did not survive being checked, and all three were generic
+instinct applied without measurement:
+
+| Marked down for | What checking found |
+|---|---|
+| Architecture — five files over 1,000 lines | #1020 had already measured composition: 49–64% JSX, extraction *relocates* lines rather than deleting them. The size is known and largely irreducible. |
+| Error handling — no reason stated at all | A scan found 7 "swallowed-looking" catch blocks; **all 7** carry explicit fallbacks or a documented reason. One was a false positive from the scan's own regex. |
+| Dependency health — 21 outdated frontend packages | Every one is a single patch/minor step, i.e. normal churn between weekly Dependabot runs. All 8 audit findings are dev-only; both production trees are clean. |
+
+Overall went A− to A on inspection alone, with no code changed.
+
+The failure mode is subtle because it produces a *plausible* report: big files,
+outdated deps and empty-looking catches are real smells in general. They were
+not smells here, and the difference is only visible by opening the file. The
+doc already says "if you can't point to a specific line, don't claim it" — the
+addition is that this applies to the GRADE, not just the examples under it. A
+category marked down with no cited line is a category not yet graded.
+
+Corollary: **a grep count is not a finding.** Each of the three above came from
+counting something — files over N lines, packages behind, catch blocks matching
+a pattern. Every one dissolved on reading the matches.
+
 ### Then run the standing gates
 
 `make review` (CodeRabbit) before opening each PR. Note the CLI does **not** load
