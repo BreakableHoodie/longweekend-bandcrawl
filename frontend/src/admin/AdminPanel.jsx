@@ -270,6 +270,13 @@ export default function AdminPanel({ currentUser, onLogout }) {
   }, [activeTab, selectedEventId, tabs])
 
   return (
+    // Full width, deliberately: Tailwind's `container` caps at 1536px (its 2xl
+    // breakpoint), which on a 1920 display left ~200px dead on each side while
+    // the 1613px roster table scrolled inside a 1502px box -- so the Followers
+    // column sat under the sticky Actions column purely because of a cap, on a
+    // display with room to spare. Admin is a data tool; the public site keeps
+    // its container. All three wrappers here must stay in step or the header,
+    // the tab bar and the content stop aligning.
     <div className="admin-shell min-h-screen bg-bg-navy">
       {/* Skip Navigation Link */}
       <a
@@ -281,7 +288,7 @@ export default function AdminPanel({ currentUser, onLogout }) {
 
       {/* Header */}
       <header className="bg-bg-purple border-b border-accent-500/20 sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4">
+        <div className="w-full px-4 py-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="flex-1">
               <h1 className="text-xl sm:text-2xl font-bold font-display mb-2">
@@ -351,7 +358,7 @@ export default function AdminPanel({ currentUser, onLogout }) {
 
       {/* Tab Navigation */}
       <div className="bg-bg-purple border-b border-accent-500/20 hidden md:block">
-        <div className="container mx-auto px-4">
+        <div className="w-full px-4">
           <div
             className="flex gap-1 sm:gap-2 overflow-x-auto"
             role="tablist"
@@ -399,7 +406,7 @@ export default function AdminPanel({ currentUser, onLogout }) {
         id="main-content"
         role="tabpanel"
         aria-labelledby={`tab-${activeTab}`}
-        className="container mx-auto px-4 py-6 pb-24 md:pb-6"
+        className="w-full px-4 py-6 pb-24 md:pb-6"
       >
         {/* Context Banner - Shows when event is selected */}
         <ContextBanner event={selectedEvent} onClear={() => setSelectedEventId(null)} />
