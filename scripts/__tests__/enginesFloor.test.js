@@ -31,7 +31,15 @@ const VERSION_GATED_APIS = [
 ];
 
 function trackedJsFiles() {
-  return execFileSync("git", ["ls-files", "*.js", "*.mjs", "*.jsx"], {
+  // The WHOLE JS/TS family, not just the extensions in use today. `.cjs` was
+  // missing and is currently unused, so that gap was latent -- but `.ts` was
+  // missing too and there IS one tracked (workers-mcp-server/src/index.ts), so
+  // a version-gated API added there would not have raised the floor.
+  //
+  // Listing extensions that do not exist yet costs nothing and removes the
+  // failure mode where adding the first file of a type silently drops it out of
+  // the scan.
+  return execFileSync("git", ["ls-files", "*.js", "*.mjs", "*.cjs", "*.jsx", "*.ts", "*.tsx", "*.mts", "*.cts"], {
     cwd: repoRoot,
     encoding: "utf8",
   })
