@@ -67,6 +67,7 @@ export default function EventFormModal({
     social_x: '',
     social_tiktok: '',
     social_youtube: '',
+    social_bandcamp: '',
     age_restriction: '',
     presented_by: '',
     reveal_mode: false,
@@ -98,6 +99,7 @@ export default function EventFormModal({
       x: currentFormData.social_x.trim(),
       tiktok: currentFormData.social_tiktok.trim(),
       youtube: currentFormData.social_youtube.trim(),
+      bandcamp: currentFormData.social_bandcamp.trim(),
     }
 
     const cleaned = Object.fromEntries(Object.entries(links).filter(([, value]) => value))
@@ -129,6 +131,7 @@ export default function EventFormModal({
         social_x: socialLinks.x || socialLinks.twitter || '',
         social_tiktok: socialLinks.tiktok || '',
         social_youtube: socialLinks.youtube || '',
+        social_bandcamp: socialLinks.bandcamp || '',
         age_restriction: event.age_restriction || '',
         presented_by: event.presented_by || '',
         reveal_mode: event?.reveal_mode === 1 || event?.reveal_mode === true,
@@ -152,6 +155,7 @@ export default function EventFormModal({
         social_x: '',
         social_tiktok: '',
         social_youtube: '',
+        social_bandcamp: '',
         age_restriction: '',
         presented_by: '',
         reveal_mode: false,
@@ -791,6 +795,17 @@ export default function EventFormModal({
                   className="w-full min-h-[44px] px-4 py-2 rounded bg-bg-navy text-white border border-gray-600 focus:border-accent-500 focus:outline-hidden focus:ring-1 focus:ring-accent-500"
                   maxLength={FIELD_LIMITS.ticketLink.max}
                   placeholder="YouTube (@handle or URL)"
+                />
+                <input
+                  id="event-social-bandcamp"
+                  aria-label="Event Bandcamp"
+                  type="text"
+                  name="social_bandcamp"
+                  value={formData.social_bandcamp}
+                  onChange={handleInputChange}
+                  className="w-full min-h-[44px] px-4 py-2 rounded bg-bg-navy text-white border border-gray-600 focus:border-accent-500 focus:outline-hidden focus:ring-1 focus:ring-accent-500"
+                  maxLength={FIELD_LIMITS.ticketLink.max}
+                  placeholder="Bandcamp (handle or URL)"
                 />
               </div>
               <p className="text-xs text-white/50 mt-2">

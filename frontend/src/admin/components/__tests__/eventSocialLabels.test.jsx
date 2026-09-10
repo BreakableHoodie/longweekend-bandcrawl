@@ -30,6 +30,7 @@ const IDS = [
   'event-social-x',
   'event-social-tiktok',
   'event-social-youtube',
+  'event-social-bandcamp',
 ]
 
 describe('event social-link inputs are accessibly named', () => {
