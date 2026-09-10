@@ -411,6 +411,27 @@ MFA TOTP follows the same rule: `functions/utils/totp.js` computes HMAC-SHA1 dir
 
 The Cloudflare Workers D1 binding does not support explicit `BEGIN`/`COMMIT` transaction syntax. However, `env.DB.batch([stmt1, stmt2, ...])` executes all statements atomically — if any fails, all are rolled back. Prefer `DB.batch()` for multi-statement mutations.
 
+**Until #1146 that atomicity was UNVERIFIABLE here**, which is worth knowing
+because it means every batch-dependent test written before then proved less
+than it appeared to. `createDBEnv`'s `batch()` in `functions/api/test-utils.js`
+ran a plain sequential loop with no transaction, so a mid-batch failure left
+earlier statements committed — the opposite of production. A test asserting "on
+failure, nothing was written" would have failed against the harness while
+passing against real D1, so nobody wrote one, and code depending on rollback
+could have been broken in production and green in CI.
+
+It is now wrapped in `db.transaction()` (better-sqlite3 is synchronous, so the
+whole loop fits inside one; nested calls become SAVEPOINTs).
+`functions/api/__tests__/testHarnessBatchAtomicity.test.js` is what makes every
+other batch-related test worth trusting — it asserts rollback on failure,
+commit on success, and that the per-statement result shape is unchanged, and it
+goes red against the old loop.
+
+**A failure must occur at EXECUTION time to test this.** A bad table name throws
+while the statement array is being built, before `batch()` is ever called, so it
+proves nothing about rollback. Use a constraint violation — a duplicate primary
+key — which prepares cleanly and fails inside the transaction.
+
 For mutations that cannot be expressed as a single batch (e.g., the event-duplication pattern in `functions/api/admin/events/[id]/duplicate.js`), use compensating deletes: if step N fails, manually undo steps 1…N-1. **The rollback is NOT in `events/[id].js`** — that route was split into its own sub-path file because Cloudflare Pages needs a dedicated file per route segment, and this pointer named the old location long after the move.
 
 The bulk band import (`functions/api/admin/bands/import.js`) follows this pattern and is **all-or-nothing**: it validates every row first (an invalid row aborts the whole import with per-row errors, writing nothing), then find-or-creates profiles and inserts performances, rolling back everything it created if any write fails. A lineup is never left half-imported.

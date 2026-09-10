@@ -242,19 +242,41 @@ export function createDBEnv(db) {
       return wrapper;
     },
     // Cloudflare D1 batch() method.
+    //
+    // ATOMIC, because D1's is (#1146). D1 has no BEGIN/COMMIT, so `batch()` IS
+    // the transaction: if any statement fails, all are rolled back, and
+    // CLAUDE.md treats that as load-bearing -- the API-key audit rows and the
+    // share-link view ledger both depend on it.
+    //
+    // This ran a plain sequential loop with no transaction, so a mid-batch
+    // failure left earlier statements COMMITTED -- the opposite of production.
+    // No test in the suite could verify rollback, and code depending on it
+    // could be broken in production and green here. Measured: renaming a table
+    // out from under a batched write failed the request while the earlier
+    // UPDATE still committed.
+    //
+    // better-sqlite3 is synchronous, so the whole loop fits inside one
+    // `db.transaction()`. Nested calls become SAVEPOINTs, so a test that opens
+    // its own transaction still works.
+    //
     // For SELECT statements the bound wrapper's all() returns { results: [...] };
     // for mutations (INSERT/UPDATE/DELETE) all() throws so we fall back to
-    // run() which returns { success, meta }.  This mirrors how D1.batch() works.
+    // run() which returns { success, meta }. A statement that fails BOTH ways
+    // is a real error: it propagates out of the transaction, which is what
+    // triggers the rollback.
     async batch(statements) {
-      const results = [];
-      for (const stmt of statements) {
-        try {
-          results.push(stmt.all());
-        } catch {
-          results.push(stmt.run());
+      const runAll = db.transaction((stmts) => {
+        const results = [];
+        for (const stmt of stmts) {
+          try {
+            results.push(stmt.all());
+          } catch {
+            results.push(stmt.run());
+          }
         }
-      }
-      return results;
+        return results;
+      });
+      return runAll(statements);
     },
   };
 }
