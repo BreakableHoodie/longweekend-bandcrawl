@@ -70,18 +70,17 @@ export async function onRequestPost(context) {
     //
     // Two defects, one fix:
     //
-    // 1. EXISTENCE ORACLE. A nonexistent id used to reach the INSERT and raise
-    //    `FOREIGN KEY constraint failed` -- which does not contain the string
-    //    "performance_id" that the catch below tests for, so it was rethrown
-    //    and became a 500, while a valid id returned 200. Two states, over
-    //    every performance id in the database, unauthenticated, behind a
-    //    rate limiter that fails OPEN.
+    // 1. NO EXISTENCE ORACLE. Unknown, foreign and non-public ids must be
+    //    indistinguishable from each other and from a valid one, so they are
+    //    dropped rather than reported. A refusal that fires only for real rows
+    //    is itself the disclosure -- the reasoning behind #983's /band/<slug>
+    //    gate, and behind follow-batch.js dropping unknown ids silently.
     //
-    //    Dropping silently REMOVES the oracle rather than moving it: unknown,
-    //    foreign and non-public ids are now indistinguishable from each other
-    //    and from a valid one. Same reasoning as #983's /band/<slug> gate --
-    //    a refusal that only fires for real rows is itself the disclosure.
-    //    follow-batch.js already drops unknown ids for the same reason.
+    //    Reporting is the easy mistake here: the catch below tests an error
+    //    message for "performance_id", which a raw `FOREIGN KEY constraint
+    //    failed` does not contain, so an unfiltered bad id becomes a 500 while
+    //    a good one returns 200. This endpoint is unauthenticated and its rate
+    //    limiter fails open, so that difference is worth removing at source.
     //
     // 2. WRONG ROWS WRITTEN. Without `p.event_id = ?` it recorded builds for
     //    performances belonging to some OTHER event, under whatever event_id

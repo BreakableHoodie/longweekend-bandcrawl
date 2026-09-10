@@ -10,10 +10,10 @@ import { createTestEnv, insertBand, insertEvent, insertVenue } from "../../test-
 // schedule fetch. So the old fixtures asserted a state the product cannot
 // produce, and their passing said nothing about the gate.
 //
-// Third instance of this exact shape in one session, after follow-batch (#1133)
-// and the announce suite's ten `verified = 1` files. When a fixture uses a
-// helper's DEFAULT for a column that gates visibility, check whether the
-// default is the permissive value before trusting a green test.
+// The rule worth carrying: when a fixture takes a helper's DEFAULT for a column
+// that gates visibility, check whether that default is the PERMISSIVE value
+// before trusting a green test. `insertEvent` defaults `status` to 'draft', and
+// `is_announced`/`reveal_mode` both default to the visible setting.
 describe("POST /api/schedule/build", () => {
   test("records schedule build for performance ids", async () => {
     const { env, rawDb } = createTestEnv();
