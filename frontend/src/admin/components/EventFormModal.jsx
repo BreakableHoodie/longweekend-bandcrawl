@@ -679,6 +679,13 @@ export default function EventFormModal({
             </div>
 
             {/* Ticket URL */}
+            {/* type="url" here, deliberately, while the social fields below are
+                type="text". Those take a handle or a bare domain and resolve it
+                (#1132); a ticket link has no handle form -- it is always a pasted
+                commerce URL -- and its validator requires a scheme, so the
+                browser's own hint is help rather than an obstacle. Making it
+                lenient would mean changing a write path that interacts with the
+                legacy read-path sanitizers from #504. */}
             <div>
               <label htmlFor="event-ticket-url" className="block text-white mb-2 text-sm font-medium">
                 Ticket Link <span className="text-white/50 text-xs">(optional)</span>
@@ -721,16 +728,18 @@ export default function EventFormModal({
               <div className="grid gap-3 sm:grid-cols-2">
                 <input
                   id="event-social-website"
-                  type="url"
+                  aria-label="Event website"
+                  type="text"
                   name="social_website"
                   value={formData.social_website}
                   onChange={handleInputChange}
                   className="w-full min-h-[44px] px-4 py-2 rounded bg-bg-navy text-white border border-gray-600 focus:border-accent-500 focus:outline-hidden focus:ring-1 focus:ring-accent-500"
                   maxLength={FIELD_LIMITS.ticketLink.max}
-                  placeholder="Website URL"
+                  placeholder="Website (example.com or URL)"
                 />
                 <input
                   id="event-social-instagram"
+                  aria-label="Event Instagram"
                   type="text"
                   name="social_instagram"
                   value={formData.social_instagram}
@@ -741,16 +750,18 @@ export default function EventFormModal({
                 />
                 <input
                   id="event-social-facebook"
-                  type="url"
+                  aria-label="Event Facebook"
+                  type="text"
                   name="social_facebook"
                   value={formData.social_facebook}
                   onChange={handleInputChange}
                   className="w-full min-h-[44px] px-4 py-2 rounded bg-bg-navy text-white border border-gray-600 focus:border-accent-500 focus:outline-hidden focus:ring-1 focus:ring-accent-500"
                   maxLength={FIELD_LIMITS.ticketLink.max}
-                  placeholder="Facebook URL"
+                  placeholder="Facebook (@handle or URL)"
                 />
                 <input
                   id="event-social-x"
+                  aria-label="Event X / Twitter"
                   type="text"
                   name="social_x"
                   value={formData.social_x}
@@ -761,6 +772,7 @@ export default function EventFormModal({
                 />
                 <input
                   id="event-social-tiktok"
+                  aria-label="Event TikTok"
                   type="text"
                   name="social_tiktok"
                   value={formData.social_tiktok}
@@ -771,13 +783,14 @@ export default function EventFormModal({
                 />
                 <input
                   id="event-social-youtube"
-                  type="url"
+                  aria-label="Event YouTube"
+                  type="text"
                   name="social_youtube"
                   value={formData.social_youtube}
                   onChange={handleInputChange}
                   className="w-full min-h-[44px] px-4 py-2 rounded bg-bg-navy text-white border border-gray-600 focus:border-accent-500 focus:outline-hidden focus:ring-1 focus:ring-accent-500"
                   maxLength={FIELD_LIMITS.ticketLink.max}
-                  placeholder="YouTube URL"
+                  placeholder="YouTube (@handle or URL)"
                 />
               </div>
               <p className="text-xs text-white/50 mt-2">
