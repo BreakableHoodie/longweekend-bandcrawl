@@ -3,8 +3,11 @@ import { safeInstagramHref, safeTikTokHref, safeXHref } from '../utils/urlSafety
 
 // Order mirrors the server's reflected keys (functions/api/schedule.js
 // safeReflectSocialLinks(event.social_links, ["instagram", "x", "tiktok"])).
-// All three are handle-or-URL fields on both the write path
-// (sanitizeOptionalHandleOrUrl) and the read path (safeReflectHandleOrUrl),
+// All three are handle-or-URL fields on the read path
+// (safeReflectHandleOrUrl). Since #1132 the WRITE path stores a canonical URL
+// for every event link field, so newly-entered values arrive here already
+// resolved -- but rows written before that still hold a bare handle, and the
+// read path still tolerates one, so these helpers stay.
 // so each needs its handle-aware href helper here too — a plain
 // safeExternalHref would silently drop the bare-handle form the admin form
 // itself recommends ("@handle or URL").
