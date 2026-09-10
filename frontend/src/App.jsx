@@ -677,6 +677,26 @@ function App() {
   }
 
   const isArchived = Boolean(eventData?.is_archived)
+  // "Something is still to come" — TWO distinct states, not one (#1150).
+  //
+  //   reveal_mode = 1        more BANDS are coming; the schedule follows later
+  //   announced, no times    the bands are all in; the SCHEDULE is not out yet
+  //
+  // Only the first had messaging. Vol 18 is the second — fifteen announced sets,
+  // every one reading "Time TBA" — so a fan had nothing to do but remember to
+  // come back. The states are mutually exclusive by construction here, so the
+  // banner can never claim both.
+  //
+  // `bands` is empty until the fetch resolves, so the length check doubles as
+  // the loading gate: no banner flashes before the data says one is warranted.
+  // Requiring a non-empty lineup also keeps this off a "Lineup TBA" event, where
+  // "set times coming soon" would be getting ahead of itself.
+  const stillToCome = useMemo(() => {
+    if (isArchived) return null
+    if (eventData?.reveal_mode === 1) return 'More bands dropping soon.'
+    if (bands.length > 0 && bands.every(band => !band.startTime)) return 'Set times coming soon.'
+    return null
+  }, [isArchived, eventData?.reveal_mode, bands])
   const myBands = bands.filter(band => selectedBands.includes(band.id))
   const selectedVenues = useMemo(() => [...new Set(myBands.map(b => b.venue).filter(Boolean))], [myBands])
 
@@ -874,12 +894,12 @@ function App() {
           </div>
         )}
 
-        {/* Reveal mode teaser — more bands dropping soon */}
-        {!isArchived && eventData?.reveal_mode === 1 && (
+        {/* Teaser for either "more bands" or "no set times yet" — see stillToCome */}
+        {stillToCome && (
           <div className="flex items-start gap-2 rounded-lg border border-accent-500/20 bg-accent-500/10 px-3 py-2.5 text-xs sm:items-center sm:gap-3 sm:px-4 sm:py-3 sm:text-sm">
             <Bell size={16} className="shrink-0 text-accent-400" aria-hidden="true" />
             <p className="text-text-secondary">
-              <span className="font-semibold">More bands dropping soon.</span>{' '}
+              <span className="font-semibold">{stillToCome}</span>{' '}
               <a href="/subscribe" className="underline hover:text-accent-200 transition-colors">
                 Subscribe for updates
               </a>{' '}

@@ -14,6 +14,7 @@ vi.mock('../../utils/adminApi', () => ({
     update: vi.fn(),
     create: vi.fn(),
     setRevealMode: vi.fn(),
+    notifySubscribers: vi.fn(),
   },
   bandsApi: {
     getByEvent: vi.fn(),
@@ -256,5 +257,130 @@ describe('EventsTab + EventFormModal — partial save when publishing fails (#82
     expect(message).toHaveTextContent(/saved/i)
 
     expect(showToast).not.toHaveBeenCalledWith('Event updated successfully!', 'success')
+  })
+})
+
+// Notifying the general subscriber list (#1150).
+//
+// The banner on the fan-facing event page promises "set times coming soon --
+// subscribe for updates". The send endpoint existed (#1149) but NOTHING in the
+// admin UI called it, so the promise could only be kept with a curl. These
+// cover the button that keeps it.
+describe('EventsTab — notify subscribers', () => {
+  // Vol 18's real shape on the day this shipped: published, fifteen sets
+  // announced, not one of them placed.
+  const LINEUP_UP_SCHEDULE_TBA = {
+    id: 37,
+    name: 'Long Weekend Band Crawl Vol. 18',
+    slug: 'lwbc18',
+    date: '2026-10-11',
+    status: 'published',
+    band_count: 15,
+    scheduled_count: 0,
+  }
+  const SCHEDULE_OUT = { ...LINEUP_UP_SCHEDULE_TBA, scheduled_count: 15 }
+
+  const renderTab = (events, showToast = vi.fn()) => {
+    render(
+      <EventsTab
+        events={events}
+        onEventsChange={vi.fn()}
+        showToast={showToast}
+        readOnly={false}
+        canArchiveEvents={true}
+      />
+    )
+    return showToast
+  }
+
+  beforeEach(() => {
+    eventsApi.notifySubscribers.mockReset()
+    eventsApi.notifySubscribers.mockResolvedValue({ success: true, sent: 3, failed: 0, skipped: 0, remaining: 0 })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('sends the LINEUP notice while no set has a time', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderTab([LINEUP_UP_SCHEDULE_TBA])
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
+
+    await waitFor(() => expect(eventsApi.notifySubscribers).toHaveBeenCalledWith(37, 'lineup_announced'))
+  })
+
+  it('sends the SCHEDULE notice once any set has a time', async () => {
+    // The kind is derived, so this is the assertion that the derivation is
+    // live rather than hardcoded to one value.
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderTab([SCHEDULE_OUT])
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
+
+    await waitFor(() => expect(eventsApi.notifySubscribers).toHaveBeenCalledWith(37, 'schedule_announced'))
+  })
+
+  it('names the notice in the confirm before anything is sent', () => {
+    // The operator does not choose the kind, so they must be able to SEE it.
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderTab([LINEUP_UP_SCHEDULE_TBA])
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
+
+    expect(confirmSpy.mock.calls[0][0]).toContain('The lineup is live')
+    expect(confirmSpy.mock.calls[0][0]).toContain('cannot be undone')
+  })
+
+  it('sends nothing when the confirm is declined', () => {
+    // Email has no undo, so the cancel path is the one that must not be vacuous.
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderTab([LINEUP_UP_SCHEDULE_TBA])
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
+
+    expect(eventsApi.notifySubscribers).not.toHaveBeenCalled()
+  })
+
+  it('tells the operator to press again when the send was capped', async () => {
+    // `remaining` is not an error -- the send is capped per invocation. A fan
+    // left in that bucket hears nothing until someone presses again, so hiding
+    // it would strand them silently.
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    eventsApi.notifySubscribers.mockResolvedValue({ success: true, sent: 200, failed: 0, skipped: 0, remaining: 47 })
+    const showToast = renderTab([LINEUP_UP_SCHEDULE_TBA])
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.stringContaining('47 still to go'), 'success'))
+  })
+
+  it('offers no button on a draft event', () => {
+    // The endpoint 404s on anything unpublished; showing the button would
+    // promise an action that cannot succeed.
+    renderTab([{ ...LINEUP_UP_SCHEDULE_TBA, status: 'draft' }])
+
+    expect(screen.queryAllByRole('button', { name: 'Notify' })).toHaveLength(0)
+  })
+
+  it('offers no button on a published event with no lineup', () => {
+    renderTab([{ ...LINEUP_UP_SCHEDULE_TBA, band_count: 0 }])
+
+    expect(screen.queryAllByRole('button', { name: 'Notify' })).toHaveLength(0)
+  })
+  it('reports a total delivery failure as an error, not as "already notified"', async () => {
+    // sent 0 / remaining 0 / failed > 0 matches the "already notified" shape on
+    // its first two fields. Without the failed check it renders in GREEN and
+    // the operator never learns nobody was mailed -- a silent failure in the
+    // one place there is no undo.
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    eventsApi.notifySubscribers.mockResolvedValue({ success: true, sent: 0, failed: 5, skipped: 0, remaining: 0 })
+    const showToast = renderTab([LINEUP_UP_SCHEDULE_TBA])
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.stringContaining('5 failed'), 'error'))
+    expect(showToast).not.toHaveBeenCalledWith(expect.stringContaining('already been notified'), 'success')
   })
 })

@@ -528,6 +528,25 @@ export const eventsApi = {
     return handleResponse(response)
   },
 
+  // Mail the general subscriber list about this event (#1149/#1150).
+  //
+  // `kind` is an allowlist on the server (`lineup_announced`, `schedule_announced`)
+  // because it is part of the delivery-tracking key -- a typo would not fail, it
+  // would silently mail everyone again under a new key.
+  //
+  // The send is CAPPED per invocation, so a non-zero `remaining` in the response
+  // is normal rather than an error: POST again and it resumes where it stopped.
+  // Calling it twice mails nobody twice.
+  async notifySubscribers(eventId, kind) {
+    const response = await fetchWithCSRFRetry(`${API_BASE}/events/${eventId}/notify-subscribers`, {
+      method: 'POST',
+      headers: getHeaders(),
+      credentials: 'include',
+      body: JSON.stringify({ kind }),
+    })
+    return handleResponse(response)
+  },
+
   async getMetrics(eventId) {
     const response = await fetchWithCSRFRetry(`${API_BASE}/events/${eventId}/metrics`, {
       headers: getHeaders(),
