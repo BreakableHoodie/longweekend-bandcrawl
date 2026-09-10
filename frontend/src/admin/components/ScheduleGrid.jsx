@@ -56,18 +56,25 @@ export default function ScheduleGrid({ bands, venues, eventDate, onSave, saving 
   // just as readily as one against an already-saved row.
   const draftRows = useMemo(
     () =>
-      sortedBands.map(band => {
-        const draft = getDraft(band)
-        return {
-          id: band.id,
-          name: band.name,
-          event_id: band.event_id,
-          venue_id: draft.venueId ? Number(draft.venueId) : null,
-          start_time: draft.startTime || null,
-          end_time: draft.endTime || null,
-          performance_date: band.performance_date || null,
-        }
-      }),
+      sortedBands
+        // A cancelled set is not happening, so its slot is FREE. Leaving it in
+        // here made an active set report a conflict against a set nobody is
+        // playing -- and since the cancel toggle is the documented way to pull
+        // a band, that false clash would appear exactly when someone is
+        // rescheduling around a drop-out.
+        .filter(band => !band.is_cancelled)
+        .map(band => {
+          const draft = getDraft(band)
+          return {
+            id: band.id,
+            name: band.name,
+            event_id: band.event_id,
+            venue_id: draft.venueId ? Number(draft.venueId) : null,
+            start_time: draft.startTime || null,
+            end_time: draft.endTime || null,
+            performance_date: band.performance_date || null,
+          }
+        }),
     [sortedBands, getDraft]
   )
 
@@ -122,6 +129,11 @@ export default function ScheduleGrid({ bands, venues, eventDate, onSave, saving 
       }
     })
 
+    // What was actually submitted, keyed by id. The inputs stay enabled during
+    // the request on purpose -- typing while a save is in flight is normal --
+    // so this snapshot is what makes it safe.
+    const submitted = new Map(changedRows.map(row => [row.id, row]))
+
     const result = await onSave(changedRows)
     const failedIds = new Set(result?.failedIds ?? [])
 
@@ -130,7 +142,19 @@ export default function ScheduleGrid({ bands, venues, eventDate, onSave, saving 
     setEdits(prev => {
       const next = { ...prev }
       for (const id of dirtyBandIds) {
-        if (!failedIds.has(id)) delete next[id]
+        if (failedIds.has(id)) continue
+        // Clear ONLY if the draft is still what this save sent. If the user
+        // kept typing while the request was in flight, the newer edit is
+        // theirs and unsaved -- dropping it would silently discard typed input
+        // and leave the grid claiming the row was saved.
+        const sent = submitted.get(id)
+        const current = next[id]
+        if (!current || !sent) continue
+        const unchangedSinceSubmit =
+          current.startTime === sent.startTime &&
+          current.endTime === sent.endTime &&
+          String(current.venueId ?? '') === String(sent.venueId ?? '')
+        if (unchangedSinceSubmit) delete next[id]
       }
       return next
     })
@@ -159,6 +183,10 @@ export default function ScheduleGrid({ bands, venues, eventDate, onSave, saving 
       )}
       <div className="overflow-x-auto">
         <table className="w-full">
+          <caption className="sr-only">
+            Set times and venues for this event. Each row is one performance; edit its start time, end time and venue,
+            then save.
+          </caption>
           <thead className="bg-bg-navy/50 border-b border-accent-500/20">
             <tr>
               <th scope="col" className="px-4 py-3 text-left text-white font-semibold">

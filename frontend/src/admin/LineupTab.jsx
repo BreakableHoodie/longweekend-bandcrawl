@@ -587,6 +587,19 @@ export default function LineupTab({ selectedEventId, selectedEvent, events, show
         .map((result, index) => (result.status === 'rejected' ? changedRows[index].id : null))
         .filter(id => id != null)
 
+      // Rows are saved independently, and the PUT rejects a conflicting time
+      // with 409. So SWAPPING two sets' times fails both halves: each new time
+      // clashes with the other row, which still holds it. Running them in
+      // parallel does not help and neither would ordering them.
+      //
+      // Saying so is the point. A bare "2 failed" on a reorder reads as a bug;
+      // naming the conflict tells the operator to move one set to a free slot
+      // first. The real fix is an atomic multi-row endpoint that validates the
+      // whole draft at once — filed rather than smuggled in here (#1161).
+      const anyConflict = results.some(
+        result => result.status === 'rejected' && /conflict/i.test(result.reason?.message ?? '')
+      )
+
       const reloaded = await loadData()
 
       const succeededCount = changedRows.length - failedIds.length
@@ -596,7 +609,11 @@ export default function LineupTab({ selectedEventId, selectedEvent, events, show
       // pointless re-save. What the operator actually needs to know is that
       // the list on screen is now stale.
       const caveats = [
-        failedIds.length > 0 ? `${failedIds.length} failed — retry the highlighted rows.` : '',
+        failedIds.length > 0
+          ? `${failedIds.length} failed — retry the highlighted rows.${
+              anyConflict ? ' Swapping two set times needs one moved to a free slot first.' : ''
+            }`
+          : '',
         reloaded ? '' : 'Could not refresh the list, so it may show stale times — reload the page.',
       ].filter(Boolean)
       showToast(

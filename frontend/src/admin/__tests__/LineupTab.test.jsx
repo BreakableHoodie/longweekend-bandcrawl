@@ -926,4 +926,19 @@ describe('LineupTab — schedule mode', () => {
       )
     )
   })
+  it('explains a conflict failure instead of just counting it', async () => {
+    // The PUT rejects a conflicting time with 409, so swapping two sets' times
+    // fails BOTH halves — each new time clashes with the other row, which
+    // still holds it. A bare "2 failed" on a reorder reads as a bug; naming
+    // the conflict tells the operator what to do about it (#1161).
+    const conflictError = new Error('Time conflict detected')
+    bandsApi.update.mockRejectedValue(conflictError)
+    render(<LineupTab selectedEventId={37} selectedEvent={makeEvent()} events={[makeEvent()]} showToast={showToast} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Schedule/i }))
+    await screen.findByTestId('schedule-grid')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Trigger schedule save' }))
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.stringContaining('free slot first'), 'error'))
+  })
 })

@@ -195,3 +195,66 @@ describe('ScheduleGrid — readOnly', () => {
     expect(within(rowFor('Headliner')).getByText('Blue Room')).toBeInTheDocument()
   })
 })
+
+// Review findings on #1160, each a real defect rather than a style note.
+describe('ScheduleGrid — review fixes', () => {
+  it('does not report a conflict against a CANCELLED set', () => {
+    // A cancelled set is not happening, so its slot is free. The false clash
+    // would appear exactly when someone reschedules around a drop-out, which
+    // is the one time this grid matters most.
+    const onSave = vi.fn().mockResolvedValue({ failedIds: [] })
+    const bands = [
+      makeBand({ id: 1, name: 'Active', venue_id: 1, start_time: '20:00', end_time: '21:00' }),
+      makeBand({ id: 2, name: 'Dropped', venue_id: 1, start_time: '20:00', end_time: '21:00', is_cancelled: 1 }),
+    ]
+    render(<ScheduleGrid bands={bands} venues={VENUES} eventDate="2026-10-11" onSave={onSave} />)
+
+    expect(document.body.textContent).not.toMatch(/Conflicts with Dropped|Overlaps with Dropped/)
+  })
+
+  it('keeps an edit made WHILE a save is in flight', async () => {
+    // The inputs stay enabled during a save on purpose. Without the
+    // submitted-snapshot check, the completing save cleared the draft for that
+    // row and the newer typed value vanished, with the grid claiming success.
+    let release
+    const onSave = vi.fn().mockImplementation(
+      () =>
+        new Promise(resolve => {
+          release = () => resolve({ failedIds: [] })
+        })
+    )
+    render(
+      <ScheduleGrid
+        bands={[makeBand({ id: 1, name: 'Headliner' })]}
+        venues={VENUES}
+        eventDate="2026-10-11"
+        onSave={onSave}
+      />
+    )
+
+    fireEvent.change(screen.getByLabelText('Start time for Headliner'), { target: { value: '20:30' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save schedule (1 change)' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+
+    // Keep typing before the request resolves.
+    fireEvent.change(screen.getByLabelText('Start time for Headliner'), { target: { value: '20:45' } })
+    release()
+
+    // Wait for the save to SETTLE first. Asserting the value directly here
+    // passes on waitFor's first tick -- while 20:45 is still on screen and
+    // before the resolution could clear it -- so it proved nothing. Verified:
+    // that version survived removing the snapshot check entirely.
+    //
+    // The button returning to "(1 change)" is the real signal: it can only say
+    // that if setEdits ran AND kept this row's draft.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save schedule (1 change)' })).toBeEnabled())
+    expect(screen.getByLabelText('Start time for Headliner')).toHaveValue('20:45')
+  })
+
+  it('gives the table an accessible caption', () => {
+    const onSave = vi.fn().mockResolvedValue({ failedIds: [] })
+    render(<ScheduleGrid bands={[makeBand()]} venues={VENUES} eventDate="2026-10-11" onSave={onSave} />)
+
+    expect(screen.getByRole('table')).toHaveAccessibleName(/set times and venues/i)
+  })
+})
