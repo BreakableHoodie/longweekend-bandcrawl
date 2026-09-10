@@ -197,6 +197,35 @@ describe("GET /sitemap.xml — event crawl priority (#1158)", () => {
     }
   });
 
+  test("an ARCHIVED event with a future date is not advertised as upcoming", async () => {
+    // Guards a property that already holds, which is the point: it would be
+    // easy to "simplify" concludedEventSql() into a plain date comparison, and
+    // this event -- archived, but dated in the future -- is what that breaks.
+    // It would then be advertised to Google at 1.0/daily as the live edition,
+    // after it is over.
+    //
+    // The combination is real, not theoretical: CLAUDE.md records an event
+    // archived on its own final day still passing a date filter, which is why
+    // /api/schedule?event=current uses the narrower published gate. The
+    // timeline draws the same line, bucketing past as
+    // `archived OR (published AND concluded by date)` -- and concludedEventSql
+    // encodes exactly that, which is why no status check is needed at the call
+    // site.
+    const { env, rawDb } = createTestEnv();
+    const live = insertEvent(rawDb, { name: "Vol 18", slug: "lwbc18", date: "2099-01-01" });
+    const archivedFuture = insertEvent(rawDb, { name: "Called Off", slug: "called-off", date: "2099-06-01" });
+    publish(rawDb, live.id);
+    rawDb.prepare("UPDATE events SET status = 'archived' WHERE id = ?").run(archivedFuture.id);
+
+    const xml = await fetchSitemap(env);
+    const archived = priorityFor(xml, "https://settimes.ca/event/called-off");
+
+    expect(archived.changefreq).toBe("monthly");
+    expect(Number(archived.priority)).toBeLessThan(
+      Number(priorityFor(xml, "https://settimes.ca/event/lwbc18").priority),
+    );
+  });
+
   test("a concluded event ranks below its own recap page", async () => {
     // Deliberate: once an edition is over the recap, with its per-event stats,
     // is the better answer than the schedule page.

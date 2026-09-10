@@ -132,6 +132,14 @@ export async function onRequestGet(context) {
       // A concluded event lands at 0.5, just under its own recap page's 0.6.
       // That ordering is deliberate: once an edition is over, the recap -- with
       // its per-event stats -- is the better answer than the schedule page.
+      //
+      // `is_concluded` alone is sufficient and no status check is needed here.
+      // `concludedEventSql()` is NOT merely a date comparison -- it is
+      // `archived OR (published AND date past)` -- so an event ARCHIVED while
+      // its date is still in the future already comes back concluded. A review
+      // pass claimed otherwise and asked for a status gate; adding one was
+      // redundant, and the test below proves the behaviour was already right by
+      // passing with it removed.
       const upcoming = !event.is_concluded;
       rows.push(`  <url>
     <loc>https://settimes.ca/event/${event.slug}</loc>
