@@ -19,6 +19,8 @@
  */
 
 import { checkPermission } from "../_middleware.js";
+import { auditLogStatementForInsertedRow } from "../../../utils/auditLogStatement.js";
+import { getClientIP } from "../../../utils/request.js";
 import { detectImageMimeType, MAX_FILE_SIZE, ALLOWED_IMAGE_TYPES } from "../../../utils/imageUpload.js";
 import { normalizeHttpUrl, validateId } from "../../../utils/validation.js";
 
@@ -113,9 +115,27 @@ export async function onRequestPost(context) {
     // bandId write). normalizeHttpUrl on write matches the PATCH endpoint's
     // sanitization so this row can never diverge from that convention.
     if (eventId) {
-      await env.DB.prepare("UPDATE events SET poster_url = ? WHERE id = ?")
-        .bind(normalizeHttpUrl(publicUrl), eventId)
-        .run();
+      // Batched with the update, so a failed audit write cannot leave an
+      // unattributed poster change. D1 has no BEGIN/COMMIT; DB.batch is the
+      // atomic unit. Inside the eventId branch on purpose: an upload with no
+      // event_id writes to R2 and no database row, so there is no resource to
+      // attribute the change to.
+      await env.DB.batch([
+        env.DB.prepare("UPDATE events SET poster_url = ? WHERE id = ?").bind(normalizeHttpUrl(publicUrl), eventId),
+        // Conditional, for the same reason as photos.js: the event can be deleted
+        // between the lookup and this write, and a zero-row UPDATE is a success
+        // in D1 -- so an unconditional INSERT would claim a poster change on an
+        // event that no longer exists.
+        auditLogStatementForInsertedRow(
+          env,
+          user.userId,
+          "event.poster_updated",
+          "event",
+          { table: "events", where: { id: eventId } },
+          { url: publicUrl },
+          getClientIP(request),
+        ),
+      ]);
     }
 
     return new Response(

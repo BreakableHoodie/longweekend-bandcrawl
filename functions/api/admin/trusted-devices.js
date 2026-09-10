@@ -3,6 +3,8 @@
 // DELETE /api/admin/trusted-devices — revoke a specific device by ID (body: { deviceId })
 
 import { parseJsonObjectBodyStrict } from "../../utils/request.js";
+import { auditLogStatementForInsertedRow } from "../../utils/auditLogStatement.js";
+import { getClientIP } from "../../utils/request.js";
 
 export async function onRequestGet(context) {
   const { env, data } = context;
@@ -74,10 +76,30 @@ export async function onRequestDelete(context) {
         headers: { "Content-Type": "application/json" },
       });
     }
-
-    await env.DB.prepare("DELETE FROM trusted_devices WHERE id = ? AND user_id = ?")
-      .bind(Number(deviceId), user.userId)
-      .run();
+    // One batch, and the ORDER is load-bearing: the audit statement is an
+    // INSERT ... SELECT FROM trusted_devices, so it must run while the row
+    // still exists. After the DELETE it would match nothing and record
+    // nothing.
+    //
+    // Batched at all because -- unlike sessions.js and revoke-all.js, which
+    // mutate through lucia -- this is a plain D1 statement, so there IS
+    // something to put in a batch alongside the audit row. I had grouped it
+    // with those two by mistake.
+    //
+    // The conditional form also makes a no-op delete honest: revoking a device
+    // that is already gone writes neither the deletion nor a claim about it.
+    await env.DB.batch([
+      auditLogStatementForInsertedRow(
+        env,
+        user.userId,
+        "trusted_device.revoked",
+        "trusted_device",
+        { table: "trusted_devices", where: { id: Number(deviceId), user_id: user.userId } },
+        {},
+        getClientIP(request),
+      ),
+      env.DB.prepare("DELETE FROM trusted_devices WHERE id = ? AND user_id = ?").bind(Number(deviceId), user.userId),
+    ]);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { "Content-Type": "application/json" },

@@ -3,6 +3,8 @@
 // DELETE /api/admin/sessions
 
 import { parseJsonObjectBody } from "../../utils/request.js";
+import { auditLog } from "./_middleware.js";
+import { getClientIP } from "../../utils/request.js";
 
 // Derive a stable, opaque revocation handle from a raw Lucia session id.
 // The raw id is an auth credential and must never leave the server; returning
@@ -106,6 +108,19 @@ export async function onRequestDelete(context) {
     }
 
     await lucia.invalidateSession(targetSessionId);
+
+    // Revoking a session is a security state change, so it is logged (#1143)
+    // even though the session tables are themselves a record -- they show what
+    // EXISTS now, not who removed what. The session id is deliberately not in
+    // the details: it is a live credential identifier, and knowing a revocation
+    // happened is the point.
+    // NOT batched with the revocation, unlike the photo and poster paths.
+    // The mutation here goes through lucia, not a D1 statement this file
+    // holds, so there is nothing to put in a DB.batch alongside it. The
+    // audit row can therefore fail independently, leaving an unattributed
+    // revocation -- accepted, because the alternative is reaching around
+    // lucia's own session handling to hand-write its SQL.
+    await auditLog(env, user.userId, "session.revoked", "session", null, {}, getClientIP(request));
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { "Content-Type": "application/json" },
