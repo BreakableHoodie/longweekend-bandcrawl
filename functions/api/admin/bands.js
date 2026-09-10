@@ -2,7 +2,7 @@
 // GET /api/admin/bands?event_id={id} - List bands for an event
 // POST /api/admin/bands - Create new band (and performance)
 
-import { checkPermission } from "./_middleware.js";
+import { checkPermission, auditLog } from "./_middleware.js";
 import {
   FIELD_LIMITS,
   isValidEmail,
@@ -21,7 +21,7 @@ import { parseOrigin } from "../../utils/parseOrigin.js";
 import { normalizeBandName } from "../../utils/bandName.js";
 import { sortableName } from "../../utils/sortableName.js";
 import { eventLocalFestivalToday } from "../../utils/eventDay.js";
-import { parseJsonObjectBody } from "../../utils/request.js";
+import { getClientIP, parseJsonObjectBody } from "../../utils/request.js";
 
 // SQLite `ORDER BY` can't strip a leading article inline (#587), so the SQL
 // in onRequestGet below is a coarse pre-sort (correct on start_time, raw-byte
@@ -321,6 +321,7 @@ export async function onRequestPost(context) {
   if (permCheck.error) {
     return permCheck.response;
   }
+  const user = permCheck.user;
 
   try {
     const body = await parseJsonObjectBody(request);
@@ -622,6 +623,35 @@ export async function onRequestPost(context) {
       }
 
       result = perfResult;
+    }
+
+    // Creating an artist wrote NO audit row until #1143, while editing one wrote
+    // 257. So every artist in the roster existed with no record of who added
+    // them -- the one question the log most obviously exists to answer.
+    //
+    // Two rows, not one, because a single request can do two distinct things:
+    // create a profile, and put it on a lineup. Reusing an existing profile
+    // does the second without the first, and `createdNewProfile` is what tells
+    // them apart -- logging unconditionally would claim an artist was created
+    // every time one was booked.
+    const ipAddress = getClientIP(request);
+    if (createdNewProfile) {
+      await auditLog(env, user.userId, "band.created", "band", bandProfile.id, { name: resolvedName }, ipAddress);
+    }
+    if (!isGlobalAdd) {
+      await auditLog(
+        env,
+        user.userId,
+        "band.added_to_lineup",
+        "band",
+        bandProfile.id,
+        {
+          name: resolvedName,
+          eventId,
+          venueId: resolvedVenueId,
+        },
+        ipAddress,
+      );
     }
 
     return new Response(

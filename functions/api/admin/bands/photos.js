@@ -6,7 +6,9 @@
  * Supports image validation, optimization, and secure file storage.
  */
 
-import { checkPermission } from "../_middleware.js";
+import { checkPermission, auditLog } from "../_middleware.js";
+import { auditLogStatementForInsertedRow } from "../../../utils/auditLogStatement.js";
+import { getClientIP } from "../../../utils/request.js";
 import { detectImageMimeType, MAX_FILE_SIZE, ALLOWED_IMAGE_TYPES } from "../../../utils/imageUpload.js";
 
 export async function onRequestPost(context) {
@@ -123,9 +125,27 @@ export async function onRequestPost(context) {
     const publicUrl = `${photoBaseUrl}/${filename}`;
 
     if (bandProfileId) {
-      const updateResult = await env.DB.prepare("UPDATE band_profiles SET photo_url = ? WHERE id = ?")
-        .bind(publicUrl, bandProfileId)
-        .run();
+      // Batched, so a failed audit write cannot leave an unattributed photo
+      // change. DB.batch is atomic on D1 (which has no BEGIN/COMMIT), so the
+      // update and its audit row land together or not at all. updateResult is
+      // still read below for the not-found race, so it must stay element 0.
+      const [updateResult] = await env.DB.batch([
+        env.DB.prepare("UPDATE band_profiles SET photo_url = ? WHERE id = ?").bind(publicUrl, bandProfileId),
+        // Conditional on the profile still existing. The pre-upload lookup can
+        // lose a race with a deletion, and D1 treats a zero-row UPDATE as a
+        // success -- so an unconditional INSERT would record a photo change that
+        // never happened, on a profile that is gone. INSERT ... SELECT writes
+        // nothing when the WHERE matches nothing.
+        auditLogStatementForInsertedRow(
+          env,
+          user.userId,
+          "band.photo_updated",
+          "band",
+          { table: "band_profiles", where: { id: bandProfileId } },
+          { url: publicUrl },
+          getClientIP(request),
+        ),
+      ]);
 
       // The profile existed when we looked it up, but it can be deleted between
       // that read and this write — another admin tab, a concurrent cleanup. The
@@ -189,6 +209,7 @@ export async function onRequestDelete(context) {
     if (permCheck.error) {
       return permCheck.response;
     }
+    const { user } = permCheck;
 
     // Extract filename from URL path
     const url = new URL(request.url);
@@ -211,6 +232,11 @@ export async function onRequestDelete(context) {
 
     // Delete from R2 bucket
     await env.BAND_PHOTOS.delete(objectKey);
+
+    // Destroying a photo is a change, and unlike the upload path there is no
+    // band_profile row to point at -- this route takes an object key, not a
+    // profile id. Logged against the key so the deletion is still attributable.
+    await auditLog(env, user.userId, "band.photo_deleted", "band_photo", null, { objectKey }, getClientIP(request));
 
     return new Response(JSON.stringify({ success: true }), {
       status: 200,

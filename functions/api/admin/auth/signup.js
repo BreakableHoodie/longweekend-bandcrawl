@@ -11,6 +11,7 @@ import {
 } from "../../../utils/authAttempts.js";
 import { logger } from "../../../utils/logger.js";
 import { getPublicBaseUrl } from "../../../utils/publicUrl.js";
+import { auditLog } from "../_middleware.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -255,6 +256,13 @@ export async function onRequestPost(context) {
     await DB.prepare("UPDATE invite_codes SET used_by_user_id = ?, used_at = datetime('now') WHERE code = ?")
       .bind(user.id, inviteCode)
       .run();
+
+    // Also an audit row, not just an auth attempt (#1143). An admin creating a
+    // user via users.js writes `user.created`; a self-signup through an invite
+    // code wrote only to auth_attempts, so the same event was recorded in two
+    // different places depending on the route taken. Attributed to the new user
+    // themselves -- they are the actor; there is no session yet.
+    await auditLog(env, user.id, "user.created", "user", user.id, { email, via: "invite_signup" }, ipAddress);
 
     // Log successful signup
     await writeAuthAttempt(DB, {
