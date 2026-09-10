@@ -73,12 +73,17 @@ describe("Admin audit log — API-key attribution and role gating (#1142)", () =
     return 7;
   };
 
-  const insert = (rawDb, { action, apiKeyId = null }) =>
+  // `undefined` for the optional argument, per
+  // nodejs-javascript-vitest.instructions.md, with the database NULL produced
+  // at the SQL boundary instead. The two are different things: absence in JS,
+  // and a NULL column meaning "cookie-authenticated". Conflating them in the
+  // default hid that distinction behind a value the rule forbids.
+  const insert = (rawDb, { action, apiKeyId }) =>
     rawDb
       .prepare(
         "INSERT INTO audit_log (user_id, action, resource_type, resource_id, ip_address, api_key_id) VALUES (?, ?, ?, ?, ?, ?)",
       )
-      .run(1, action, "event", 1, "127.0.0.1", apiKeyId);
+      .run(1, action, "event", 1, "127.0.0.1", apiKeyId ?? null);
 
   const get = (env, headers, qs = "") =>
     auditLogHandler.onRequestGet({
@@ -91,7 +96,7 @@ describe("Admin audit log — API-key attribution and role gating (#1142)", () =
     // One of each, so the assertion distinguishes the two rather than merely
     // finding the field present -- a projection hardcoded to false or true
     // would satisfy a single-row test.
-    insert(rawDb, { action: "event.created", apiKeyId: null });
+    insert(rawDb, { action: "event.created" });
     insert(rawDb, { action: "event.updated", apiKeyId: seedKey(rawDb) });
 
     const data = await (await get(env, headers)).json();
