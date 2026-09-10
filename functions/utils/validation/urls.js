@@ -3,30 +3,9 @@
 // (#906) — see that file's header for why.
 
 import { FIELD_LIMITS } from "./fieldLimits.js";
-import { sanitizeString, sanitizeOptionalText } from "./strings.js";
+import { sanitizeOptionalText } from "./strings.js";
 
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(["http:", "https:"]);
-
-function sanitizeOptionalHandle(value, maxLength, label) {
-  const text = sanitizeOptionalText(value, maxLength, label);
-  if (!text) {
-    return null;
-  }
-
-  if (/\s/.test(text)) {
-    throw new Error(`${label} must not contain spaces`);
-  }
-
-  // A handle is a bare @name — it must never carry a URL scheme (javascript:,
-  // data:, etc.) or path separators. Legitimate Instagram/X/TikTok handles
-  // never contain these characters, so any occurrence means the field is
-  // being used to smuggle a URL/scheme past the handle-only contract.
-  if (/[:/\\]/.test(text)) {
-    throw new Error(`${label} must not contain a URL scheme or path separator`);
-  }
-
-  return text;
-}
 
 function parseJsonInput(value, label) {
   if (value === undefined || value === null || value === "") {
@@ -46,23 +25,6 @@ function parseJsonInput(value, label) {
   }
 
   throw new Error(`${label} must be valid JSON`);
-}
-
-function sanitizeOptionalHandleOrUrl(value, maxLength, label) {
-  if (value === undefined || value === null || value === "") {
-    return null;
-  }
-
-  const text = sanitizeString(String(value));
-  if (!text) {
-    return null;
-  }
-
-  if (/^https?:\/\//i.test(text)) {
-    return sanitizeOptionalHttpUrl(text, maxLength, label);
-  }
-
-  return sanitizeOptionalHandle(text, maxLength, label);
 }
 
 /**
@@ -137,7 +99,7 @@ export function normalizeHttpUrl(url) {
 
 /**
  * Sanitize a stored handle-or-URL value for safe reflection in an API
- * response. This is a read-path counterpart to `sanitizeOptionalHandleOrUrl`
+ * response. This is a read-path counterpart to `normalizeLinkField`
  * (the write-path validator) — it exists because rows written before the
  * write-path guard existed (or written by a bypassed/legacy path) may still
  * contain unsafe scheme values like `javascript:alert(1)` in the DB. Never
@@ -246,7 +208,7 @@ export function sanitizeOptionalHttpUrl(value, maxLength = FIELD_LIMITS.url.max,
 }
 
 /**
- * Per-platform configuration for `normalizeArtistLinkField`. Each entry
+ * Per-platform configuration for `normalizeLinkField`. Each entry
  * defines the field limit, error label, and — where the platform has a
  * canonical handle form — a function that builds the profile URL from a
  * bare handle.
@@ -291,6 +253,70 @@ const BAND_LINK_FIELD_CONFIG = {
 };
 
 /**
+ * The event-side twin of BAND_LINK_FIELD_CONFIG, feeding the SAME resolver
+ * (#1132).
+ *
+ * Events previously had a second, simpler implementation --
+ * `sanitizeOptionalHandleOrUrl`, which only asked "does it start with http?"
+ * and otherwise stored the value as a bare handle. That gave one concept three
+ * behaviours:
+ *
+ *   instagram/x/tiktok        accepted a handle, STORED IT RAW, and rejected
+ *                             `instagram.com/foo` outright
+ *   facebook/youtube/         demanded a full URL, so a handle was refused for
+ *   bandcamp/website          a value the artist form accepts
+ *
+ * which is exactly the "second list of link fields" bandFields.js warns about.
+ * Both sides now resolve through `normalizeLinkField`, so every field takes a
+ * handle, a bare domain or a full URL and stores ONE canonical URL.
+ *
+ * `website` deliberately has no `handleToUrl`: there is no platform to infer a
+ * host from, so a bare word is rejected rather than invented.
+ *
+ * The field set differs from the band one on purpose -- events carry `x` and
+ * `tiktok`, artists carry `spotify`, `apple_music` and `linktree`.
+ */
+const EVENT_LINK_FIELD_CONFIG = {
+  website: { maxLength: FIELD_LIMITS.ticketLink.max, label: "Website URL" },
+  instagram: {
+    maxLength: FIELD_LIMITS.ticketLink.max,
+    label: "Instagram",
+    handleToUrl: (h) => `https://instagram.com/${h}`,
+    domain: "instagram.com",
+  },
+  facebook: {
+    maxLength: FIELD_LIMITS.ticketLink.max,
+    label: "Facebook",
+    handleToUrl: (h) => `https://facebook.com/${h}`,
+    domain: "facebook.com",
+  },
+  x: {
+    maxLength: FIELD_LIMITS.ticketLink.max,
+    label: "X / Twitter",
+    handleToUrl: (h) => `https://x.com/${h}`,
+    domain: "x.com",
+  },
+  tiktok: {
+    maxLength: FIELD_LIMITS.ticketLink.max,
+    label: "TikTok",
+    handleToUrl: (h) => `https://tiktok.com/@${h}`,
+    domain: "tiktok.com",
+  },
+  youtube: {
+    maxLength: FIELD_LIMITS.ticketLink.max,
+    label: "YouTube",
+    handleToUrl: (h) => `https://youtube.com/@${h}`,
+    domain: "youtube.com",
+  },
+  bandcamp: {
+    maxLength: FIELD_LIMITS.ticketLink.max,
+    label: "Bandcamp",
+    handleToUrl: (h) => `https://${h}.bandcamp.com`,
+    domain: "bandcamp.com",
+  },
+};
+
+/**
  * Normalise a single artist link field value, resolving input in this order:
  *
  *   1. trim; empty → null
@@ -308,7 +334,7 @@ const BAND_LINK_FIELD_CONFIG = {
  * @param {{ maxLength: number, label: string, handleToUrl?: (h: string) => string }} config
  * @returns {string|null} Canonical URL or null
  */
-function normalizeArtistLinkField(value, config) {
+function normalizeLinkField(value, config) {
   const { maxLength, label, handleToUrl, domain } = config;
 
   const text = sanitizeOptionalText(value, maxLength, label);
@@ -410,7 +436,7 @@ export function sanitizeBandSocialLinks(value) {
 
   const sanitized = {};
   for (const [key, config] of Object.entries(BAND_LINK_FIELD_CONFIG)) {
-    sanitized[key] = normalizeArtistLinkField(parsed[key], config);
+    sanitized[key] = normalizeLinkField(parsed[key], config);
   }
 
   return Object.values(sanitized).some(Boolean) ? JSON.stringify(sanitized) : null;
@@ -426,15 +452,10 @@ export function sanitizeEventSocialLinks(value) {
     throw new Error("Social links must be a JSON object");
   }
 
-  const sanitized = {
-    website: sanitizeOptionalHttpUrl(parsed.website, FIELD_LIMITS.ticketLink.max, "Website URL"),
-    instagram: sanitizeOptionalHandleOrUrl(parsed.instagram, FIELD_LIMITS.ticketLink.max, "Instagram"),
-    facebook: sanitizeOptionalHttpUrl(parsed.facebook, FIELD_LIMITS.ticketLink.max, "Facebook URL"),
-    x: sanitizeOptionalHandleOrUrl(parsed.x, FIELD_LIMITS.ticketLink.max, "X / Twitter"),
-    tiktok: sanitizeOptionalHandleOrUrl(parsed.tiktok, FIELD_LIMITS.ticketLink.max, "TikTok"),
-    youtube: sanitizeOptionalHttpUrl(parsed.youtube, FIELD_LIMITS.ticketLink.max, "YouTube URL"),
-    bandcamp: sanitizeOptionalHttpUrl(parsed.bandcamp, FIELD_LIMITS.ticketLink.max, "Bandcamp URL"),
-  };
+  const sanitized = {};
+  for (const [key, config] of Object.entries(EVENT_LINK_FIELD_CONFIG)) {
+    sanitized[key] = normalizeLinkField(parsed[key], config);
+  }
 
   return Object.values(sanitized).some(Boolean) ? JSON.stringify(sanitized) : null;
 }
