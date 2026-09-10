@@ -534,6 +534,21 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_created_by ON api_keys (created_by);
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_api_key ON audit_log (api_key_id);
 
+CREATE TABLE IF NOT EXISTS subscription_notifications (
+  id              INTEGER PRIMARY KEY,
+  subscription_id INTEGER NOT NULL REFERENCES email_subscriptions(id) ON DELETE CASCADE,
+  event_id        INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  kind            TEXT    NOT NULL,
+  sent_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+  -- The claim. INSERT OR IGNORE against this returns changes=0 when another
+  -- request already claimed this recipient, which is what stops two concurrent
+  -- sends mailing the same person twice.
+  UNIQUE (subscription_id, event_id, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscription_notifications_lookup
+  ON subscription_notifications(event_id, kind, subscription_id);
+
 -- ============================================
 -- TEST ACCOUNTS (passwords set by scripts/setup-local-db.sh)
 -- ============================================
