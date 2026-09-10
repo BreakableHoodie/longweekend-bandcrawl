@@ -2309,13 +2309,21 @@ paths:
           CsrfToken: []
       responses:
         "200":
-          description: "Send result: { success, sent, failed, remaining }"
+          description: Send result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriberNotifyResult"
         "400":
-          description: Invalid event id, body, or unknown kind
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
-          description: Requires editor role or higher
+          $ref: "#/components/responses/Forbidden"
         "404":
-          description: No published event with that id
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
 
   /api/admin/bands/{id}/resend-announcement:
     post:
@@ -3137,6 +3145,38 @@ components:
     GenericRecord:
       type: object
       additionalProperties: true
+
+    SubscriberNotifyResult:
+      type: object
+      required: [success, sent, failed, skipped, remaining]
+      properties:
+        success:
+          type: boolean
+        sent:
+          type: integer
+          description: Subscribers this invocation delivered to.
+        failed:
+          type: integer
+          description: >
+            Provider delivery failures only. Their claims were released, so a
+            follow-up POST retries exactly these.
+        skipped:
+          type: integer
+          description: >
+            Subscribers whose claim was held by a concurrent invocation. NOT a
+            failure -- another run is delivering to them.
+        remaining:
+          type: integer
+          description: >
+            Verified subscribers still awaiting this notice, re-queried AFTER
+            the send. Above zero means POST again -- either the list exceeded
+            one invocation's cap, or some sends failed.
+      example:
+        success: true
+        sent: 200
+        failed: 0
+        skipped: 0
+        remaining: 5
 
     Error:
       type: object

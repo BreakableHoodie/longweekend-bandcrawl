@@ -94,10 +94,10 @@ export async function onRequestPost(context) {
   if (subscribers.length === 0) {
     // 200, not an error: "everyone already has it" is a success, and it is what
     // a second call after a complete send looks like.
-    return json({ success: true, sent: 0, failed: 0, remaining: 0 });
+    return json({ success: true, sent: 0, failed: 0, skipped: 0, remaining: 0 });
   }
 
-  const { sent, failed } = await notifySubscribers(env, DB, {
+  const { sent, failed, skipped } = await notifySubscribers(env, DB, {
     eventId,
     kind,
     eventName: event.name,
@@ -113,7 +113,7 @@ export async function onRequestPost(context) {
     "event.subscribers_notified",
     "event",
     eventId,
-    { kind, sent, failed },
+    { kind, sent, failed, skipped },
     getClientIP(request),
   );
 
@@ -123,5 +123,5 @@ export async function onRequestPost(context) {
   // figure that actually tells an admin whether to POST again.
   const remaining = await countPending(DB, { eventId, kind });
 
-  return json({ success: true, sent, failed, remaining });
+  return json({ success: true, sent, failed, skipped, remaining });
 }

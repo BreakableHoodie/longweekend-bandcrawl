@@ -18,7 +18,18 @@ CREATE TABLE IF NOT EXISTS subscription_notifications (
   subscription_id INTEGER NOT NULL REFERENCES email_subscriptions(id) ON DELETE CASCADE,
   event_id        INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   kind            TEXT    NOT NULL,
-  sent_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+  -- When the row was CLAIMED, not when mail was delivered. The two are
+  -- deliberately separate columns.
+  claimed_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+  -- NULL until the provider confirms. A claim is NOT a delivery record: if the
+  -- Worker dies between claiming and sending -- CPU limit, eviction, an
+  -- unhandled throw -- the row survives with delivered_at still NULL, and a
+  -- claim-only design would exclude that subscriber from every later run
+  -- FOREVER, having mailed them nothing.
+  --
+  -- So `pendingSubscribers` treats a claim older than the lease window with no
+  -- delivery as abandoned and retryable. Delivered rows are permanent.
+  delivered_at    TEXT,
   -- The claim. INSERT OR IGNORE against this returns changes=0 when another
   -- request already claimed this recipient, which is what stops two concurrent
   -- sends mailing the same person twice.

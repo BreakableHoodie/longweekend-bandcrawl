@@ -41,6 +41,22 @@ const SEND_CONCURRENCY = 8;
 export const MAX_PER_INVOCATION = 200;
 
 /**
+ * How long a claim is honoured before it is treated as abandoned.
+ *
+ * A CLAIM IS NOT A DELIVERY RECORD. If the Worker dies between claiming and
+ * sending -- CPU limit, eviction, an unhandled throw -- the row survives with
+ * `delivered_at` still NULL. Excluding on the claim alone would drop that
+ * subscriber from every later run forever, having mailed them nothing: the
+ * exact fire-once failure this design exists to avoid, reintroduced through
+ * the back door.
+ *
+ * So an undelivered claim older than this is retryable. Fifteen minutes is far
+ * longer than any send can legitimately take (a Worker invocation is bounded in
+ * seconds) while short enough that recovery does not need a human.
+ */
+export const CLAIM_LEASE_MINUTES = 15;
+
+/**
  * Subscribers who have NOT yet received `kind` for this event.
  *
  * `verified = 1` is not optional. Double opt-in exists so an address the
@@ -57,11 +73,19 @@ export async function pendingSubscribers(DB, { eventId, kind, limit = MAX_PER_IN
        AND NOT EXISTS (
          SELECT 1 FROM subscription_notifications n
          WHERE n.subscription_id = s.id AND n.event_id = ? AND n.kind = ?
+           AND (
+             -- Delivered: permanent, never resend.
+             n.delivered_at IS NOT NULL
+             -- Or claimed recently and still in flight elsewhere. Past the
+             -- lease with no delivery, the claim is abandoned and this
+             -- subscriber becomes eligible again.
+             OR n.claimed_at > datetime('now', ?)
+           )
        )
      ORDER BY s.id
      LIMIT ?`,
   )
-    .bind(eventId, kind, limit)
+    .bind(eventId, kind, `-${CLAIM_LEASE_MINUTES} minutes`, limit)
     .all();
   return results || [];
 }
@@ -81,9 +105,10 @@ export async function countPending(DB, { eventId, kind }) {
        AND NOT EXISTS (
          SELECT 1 FROM subscription_notifications n
          WHERE n.subscription_id = s.id AND n.event_id = ? AND n.kind = ?
+           AND (n.delivered_at IS NOT NULL OR n.claimed_at > datetime('now', ?))
        )`,
   )
-    .bind(eventId, kind)
+    .bind(eventId, kind, `-${CLAIM_LEASE_MINUTES} minutes`)
     .first();
   return row?.n ?? 0;
 }
@@ -103,17 +128,38 @@ export async function notifySubscribers(env, DB, { eventId, kind, eventName, eve
   // every send simultaneously, which is how a Worker exhausts its subrequest
   // budget. Same reason announceDigest.js chunks.
   const sendOne = async (sub) => {
-    // Claim atomically BEFORE delivery. INSERT OR IGNORE returns changes=0
-    // when another request already claimed this recipient, which is what
-    // stops two concurrent sends mailing the same person twice.
+    // Claim BEFORE delivery, so two concurrent runs cannot mail one person
+    // twice. A claim is NOT a delivery record, though -- see delivered_at.
     const claim = await DB.prepare(
       "INSERT OR IGNORE INTO subscription_notifications (subscription_id, event_id, kind) VALUES (?, ?, ?)",
     )
       .bind(sub.id, eventId, kind)
       .run();
 
-    if (claim.meta.changes === 0) {
-      return false;
+    let owned = claim.meta.changes === 1;
+    if (!owned) {
+      // Take over an ABANDONED claim. If a Worker died between claiming and
+      // sending, the row survives undelivered and INSERT OR IGNORE can never
+      // reclaim it -- that subscriber would be skipped forever, mailed nothing.
+      // Conditional on both delivered_at IS NULL and the lease having expired,
+      // so a live sender's claim is never stolen.
+      const retake = await DB.prepare(
+        `UPDATE subscription_notifications
+         SET claimed_at = datetime('now')
+         WHERE subscription_id = ? AND event_id = ? AND kind = ?
+           AND delivered_at IS NULL
+           AND claimed_at <= datetime('now', ?)`,
+      )
+        .bind(sub.id, eventId, kind, `-${CLAIM_LEASE_MINUTES} minutes`)
+        .run();
+      owned = retake.meta.changes === 1;
+    }
+
+    if (!owned) {
+      // Someone else holds a LIVE claim. Not a failure -- they are sending, or
+      // already have. Counting this as `failed` makes two concurrent runs look
+      // like delivery problems when every subscriber was in fact mailed.
+      return "skipped";
     }
 
     // Every send carries an unsubscribe link. The token already exists on the
@@ -129,38 +175,49 @@ export async function notifySubscribers(env, DB, { eventId, kind, eventName, eve
         `<p><a href="${unsubUrl}">Unsubscribe</a></p>`,
     });
 
-    const delivered = result?.delivered === true;
-    if (!delivered) {
-      // Release the claim so a resend can retry this recipient. Without this
-      // a transient failure would silently drop them forever, which is the
-      // exact bug the band-follow path replaced.
+    if (result?.delivered !== true) {
+      // Release immediately rather than waiting for the lease to lapse, so a
+      // resend can retry this recipient now.
       await DB.prepare("DELETE FROM subscription_notifications WHERE subscription_id = ? AND event_id = ? AND kind = ?")
         .bind(sub.id, eventId, kind)
         .run();
-      return false;
+      return "failed";
     }
 
-    // Bookkeeping only — `last_email_sent` predates this sender and had never
-    // been written by anything. Not used for gating: the notifications table
-    // is the record, because a single timestamp cannot say WHICH notice was
-    // received.
+    // Delivery confirmed by the provider. ONLY now is the row a delivery
+    // record, and only now is it permanent.
+    await DB.prepare(
+      "UPDATE subscription_notifications SET delivered_at = datetime('now') WHERE subscription_id = ? AND event_id = ? AND kind = ?",
+    )
+      .bind(sub.id, eventId, kind)
+      .run();
+
+    // Bookkeeping only -- `last_email_sent` predates this sender and had never
+    // been written by anything. Not used for gating: the notifications table is
+    // the record, because one timestamp cannot say WHICH notice was received.
     await DB.prepare("UPDATE email_subscriptions SET last_email_sent = datetime('now') WHERE id = ?")
       .bind(sub.id)
       .run();
-    return true;
+    return "sent";
   };
 
+  // THREE outcomes, not two. `skipped` means another invocation owns the claim
+  // -- that subscriber is being handled, not dropped -- so folding it into
+  // `failed` would report delivery problems on a run where everyone was mailed.
   let sent = 0;
   let failed = 0;
+  let skipped = 0;
   for (let i = 0; i < subscribers.length; i += SEND_CONCURRENCY) {
     const results = await Promise.allSettled(subscribers.slice(i, i + SEND_CONCURRENCY).map(sendOne));
     for (const r of results) {
-      if (r.status === "fulfilled" && r.value === true) sent++;
+      if (r.status !== "fulfilled") failed++;
+      else if (r.value === "sent") sent++;
+      else if (r.value === "skipped") skipped++;
       else failed++;
     }
   }
   if (failed > 0) {
-    logger.warn("subscriber notifications partially failed", { eventId, kind, sent, failed });
+    logger.warn("subscriber notifications partially failed", { eventId, kind, sent, failed, skipped });
   }
-  return { sent, failed };
+  return { sent, failed, skipped };
 }

@@ -200,6 +200,72 @@ describe("POST /api/admin/events/[id]/notify-subscribers", () => {
     expect(body).toMatchObject({ sent: 1, failed: 1, remaining: 1 });
   });
 
+  it("retries a claim abandoned by a dead invocation", async () => {
+    const { env, rawDb, headers } = createTestEnv({ role: "editor" });
+    const ev = insertEvent(rawDb, { name: "Vol. 18", slug: "lwbc18" });
+    publish(rawDb, ev.id);
+    const s1 = sub(rawDb, { email: "stranded@example.com", verified: 1 });
+
+    // Exactly what a Worker killed between claiming and sending leaves behind:
+    // a claim row, undelivered, past its lease. A claim-only design skips this
+    // subscriber forever having mailed them nothing.
+    rawDb
+      .prepare(
+        "INSERT INTO subscription_notifications (subscription_id, event_id, kind, claimed_at, delivered_at) VALUES (?, ?, 'schedule_announced', datetime('now', '-60 minutes'), NULL)",
+      )
+      .run(s1.id, ev.id);
+
+    const body = await (await post(env, headers, ev.id, { kind: "schedule_announced" })).json();
+    expect(body).toMatchObject({ sent: 1, remaining: 0 });
+    expect(sendEmail.mock.calls[0][1].to).toBe("stranded@example.com");
+  });
+
+  it("never resends to someone already delivered", async () => {
+    const { env, rawDb, headers } = createTestEnv({ role: "editor" });
+    const ev = insertEvent(rawDb, { name: "Vol. 18", slug: "lwbc18" });
+    publish(rawDb, ev.id);
+    const s1 = sub(rawDb, { email: "done@example.com", verified: 1 });
+
+    // Delivered long ago. The lease must NOT make this retryable — only
+    // undelivered claims expire.
+    rawDb
+      .prepare(
+        "INSERT INTO subscription_notifications (subscription_id, event_id, kind, claimed_at, delivered_at) VALUES (?, ?, 'schedule_announced', datetime('now', '-99 days'), datetime('now', '-99 days'))",
+      )
+      .run(s1.id, ev.id);
+
+    const body = await (await post(env, headers, ev.id, { kind: "schedule_announced" })).json();
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(body).toMatchObject({ sent: 0, remaining: 0 });
+  });
+
+  it("counts a live claim collision as skipped, not failed", async () => {
+    const { env, rawDb } = createTestEnv({ role: "editor" });
+    const ev = insertEvent(rawDb, { name: "Vol. 18", slug: "lwbc18" });
+    publish(rawDb, ev.id);
+    sub(rawDb, { email: "a@example.com", verified: 1 });
+
+    const args = {
+      eventId: ev.id,
+      kind: "schedule_announced",
+      eventName: "V",
+      eventSlug: "lwbc18",
+      subject: "s",
+      lead: "l",
+    };
+    const list = await pendingSubscribers(env.DB, { eventId: ev.id, kind: "schedule_announced" });
+    const [a, b] = await Promise.all([
+      notifySubscribers(env, env.DB, { ...args, subscribers: list }),
+      notifySubscribers(env, env.DB, { ...args, subscribers: list }),
+    ]);
+
+    // One sends, one finds the claim held. Reporting that second run as a
+    // FAILURE would say delivery broke on a run where the subscriber was mailed.
+    expect(a.sent + b.sent).toBe(1);
+    expect(a.skipped + b.skipped).toBe(1);
+    expect(a.failed + b.failed).toBe(0);
+  });
+
   it("refuses an unknown kind rather than mailing under a new key", async () => {
     const { env, rawDb, headers } = createTestEnv({ role: "editor" });
     const ev = insertEvent(rawDb, { name: "Vol. 18", slug: "lwbc18" });
