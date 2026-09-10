@@ -1,13 +1,14 @@
-import { CalendarDays, Guitar, List, Settings, SlidersHorizontal, Users, Warehouse } from 'lucide-react'
+import { CalendarDays, Guitar, List, Settings, SlidersHorizontal, Users, Warehouse, ScrollText } from 'lucide-react'
 import PropTypes from 'prop-types'
 
-const buildNavItems = ({ showLineup, showUsers, showPlatform }) => [
+const buildNavItems = ({ showLineup, showUsers, showAudit, showPlatform }) => [
   { id: 'events', label: 'Events', icon: CalendarDays },
   ...(showLineup ? [{ id: 'lineup', label: 'Lineup', icon: List }] : []),
   { id: 'roster', label: 'Roster', icon: Guitar },
   { id: 'venues', label: 'Venues', icon: Warehouse },
   ...(showUsers ? [{ id: 'users', label: 'Users', icon: Users }] : []),
   { id: 'settings', label: 'Settings', icon: Settings },
+  ...(showAudit ? [{ id: 'audit', label: 'Audit', icon: ScrollText }] : []),
   ...(showPlatform ? [{ id: 'platform', label: 'Platform', icon: SlidersHorizontal }] : []),
 ]
 
@@ -16,9 +17,10 @@ export default function BottomNav({
   onTabChange,
   showLineup = false,
   showUsers = false,
+  showAudit = false,
   showPlatform = false,
 }) {
-  const navItems = buildNavItems({ showLineup, showUsers, showPlatform })
+  const navItems = buildNavItems({ showLineup, showUsers, showAudit, showPlatform })
   return (
     <nav
       className="md:hidden fixed bottom-0 left-0 right-0 bg-bg-purple/95 border-t border-white/10 backdrop-blur-xs z-40"
@@ -49,5 +51,6 @@ BottomNav.propTypes = {
   onTabChange: PropTypes.func.isRequired,
   showLineup: PropTypes.bool,
   showUsers: PropTypes.bool,
+  showAudit: PropTypes.bool,
   showPlatform: PropTypes.bool,
 }

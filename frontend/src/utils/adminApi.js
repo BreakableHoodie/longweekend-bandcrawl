@@ -740,6 +740,32 @@ export const trustedDevicesApi = {
 }
 
 // Users API
+export const auditLogApi = {
+  /**
+   * GET /api/admin/audit-log — admin only, server-side filtered and paginated.
+   *
+   * Filters are passed through rather than applied client-side: the table is
+   * already 465 rows and only grows, and the endpoint caps `limit` at 100, so
+   * fetching everything to filter locally would break as soon as it mattered.
+   */
+  async list({ userId, action, resourceType, limit = 50, offset = 0 } = {}) {
+    const params = new URLSearchParams()
+    // Only send a param the caller actually set -- an empty string would be
+    // parsed server-side and rejected as an invalid user_id.
+    if (userId) params.set('user_id', String(userId))
+    if (action) params.set('action', action)
+    if (resourceType) params.set('resource_type', resourceType)
+    params.set('limit', String(limit))
+    params.set('offset', String(offset))
+
+    const response = await fetchWithCSRFRetry(`${API_BASE}/audit-log?${params}`, {
+      headers: getHeaders(),
+      credentials: 'include',
+    })
+    return handleResponse(response)
+  },
+}
+
 export const usersApi = {
   async getAll() {
     const response = await fetchWithCSRFRetry(`${API_BASE}/users`, {
