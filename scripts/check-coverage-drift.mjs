@@ -91,9 +91,28 @@ export async function checkDrift({ label, configPath, summaryPath, slack = SLACK
     return { ok: false, lines: [`✗ ${label}: no coverage thresholds found in ${configPath}`] };
   }
 
-  const total = JSON.parse(readFileSync(summaryPath, "utf8")).total;
+  // Parsed inside try/catch so a truncated or non-object summary returns the
+  // same controlled shape as every other failure here, naming the file to
+  // regenerate. Unguarded, `JSON.parse("null").total` raises a TypeError and
+  // the gate exits with a stack trace pointing at a crash rather than at the
+  // input -- which is the wrong thing to hand someone whose build just went red.
+  let total;
+  try {
+    total = JSON.parse(readFileSync(summaryPath, "utf8"))?.total;
+  } catch (err) {
+    return {
+      ok: false,
+      lines: [
+        `✗ ${label}: could not read ${summaryPath}: ${err.message}`,
+        `  Regenerate it — e.g. npm run test:coverage`,
+      ],
+    };
+  }
   if (!total) {
-    return { ok: false, lines: [`✗ ${label}: coverage summary has no 'total' block`] };
+    return {
+      ok: false,
+      lines: [`✗ ${label}: coverage summary has no 'total' block — regenerate it, e.g. npm run test:coverage`],
+    };
   }
 
   const drifted = [];
@@ -186,6 +205,15 @@ async function main() {
 
 // Same reason as the import above: string-concatenating "file://" onto argv[1]
 // mis-compares for any path needing escaping, which would silently skip main().
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+//
+// The argv[1] existence check is NOT defensive padding. `pathToFileURL(undefined)`
+// THROWS, so without it merely importing this module from a context with no
+// script path -- `node --input-type=module -e`, some tooling, a worker -- dies
+// with ERR_INVALID_ARG_TYPE before any export can be read. The string-concat
+// version this replaced degraded harmlessly to "file://undefined"; the correct
+// pathToFileURL version does not, which makes this a regression the fix itself
+// introduced. Vitest sets argv[1], so the self-test cannot see it -- found by
+// probing the module from `node -e`.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await main();
 }
