@@ -231,13 +231,33 @@ export async function flushAnnounceDigest(env, DB) {
       result = { delivered: false };
     }
     if (result?.delivered) {
+      // Mark DELIVERED, not merely claimed (#1152). This is mandatory, not
+      // bookkeeping: an undelivered claim past its lease is now treated as
+      // abandoned and retryable, so a successful send left unmarked would be
+      // RE-MAILED fifteen minutes later -- strictly worse than the stranding
+      // this change fixes.
+      await DB.batch(
+        task.claimed.map((item) =>
+          DB.prepare(
+            "UPDATE band_follow_notifications SET delivered_at = datetime('now') WHERE performance_id = ? AND band_follow_id = ?",
+          ).bind(item.performance_id, item.band_follow_id),
+        ),
+      );
       sent++;
     } else {
-      // Release claims so resend-announcement can recover this fan. If the
-      // release itself fails, the band_follow_notifications row(s) survive,
-      // which means resend-announcement (which only recovers followers
-      // WITHOUT a notification row) will permanently skip this fan unless
-      // someone manually deletes the row. We deliberately do not retry the
+      // Release claims so resend-announcement can recover this fan.
+      //
+      // A FAILED RELEASE IS NO LONGER PERMANENT (#1152). This used to read:
+      // if the release itself fails the rows survive, and resend-announcement
+      // -- which only recovered followers with NO notification row -- would
+      // skip this fan forever unless someone deleted the row by hand. The
+      // ledger now separates claimed_at from delivered_at, and every reader
+      // ignores an undelivered claim past its lease, so a stranded row heals
+      // itself within CLAIM_LEASE_MINUTES. Releasing promptly is still worth
+      // doing -- it makes recovery immediate instead of delayed -- but it is
+      // no longer the only thing standing between a fan and silence.
+      //
+      // We deliberately do not retry the
       // DELETE here: D1 failures inside a Worker are rarely transient, and a
       // retry adds its own failure mode. Instead we count the fan as failed
       // (so the returned counts stay accurate and the `failed > 0` warning

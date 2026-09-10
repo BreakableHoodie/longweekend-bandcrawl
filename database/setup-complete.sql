@@ -436,17 +436,6 @@ CREATE TABLE IF NOT EXISTS page_views_daily (
 
 CREATE INDEX IF NOT EXISTS idx_page_views_date ON page_views_daily(date);
 
-CREATE TABLE IF NOT EXISTS band_follow_notifications (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  performance_id INTEGER NOT NULL REFERENCES performances(id) ON DELETE CASCADE,
-  band_follow_id INTEGER NOT NULL REFERENCES band_follows(id) ON DELETE CASCADE,
-  notified_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(performance_id, band_follow_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_band_follow_notifications_performance
-  ON band_follow_notifications(performance_id);
-
 CREATE TABLE IF NOT EXISTS band_announce_queue (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   band_follow_id INTEGER NOT NULL REFERENCES band_follows(id) ON DELETE CASCADE,
@@ -559,6 +548,20 @@ CREATE TABLE IF NOT EXISTS subscription_notifications (
 
 CREATE INDEX IF NOT EXISTS idx_subscription_notifications_lookup
   ON subscription_notifications(event_id, kind, subscription_id);
+
+CREATE TABLE IF NOT EXISTS "band_follow_notifications" (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  performance_id INTEGER NOT NULL REFERENCES performances(id) ON DELETE CASCADE,
+  band_follow_id INTEGER NOT NULL REFERENCES band_follows(id) ON DELETE CASCADE,
+  -- A run took ownership. Not proof of anything having been sent.
+  claimed_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+  -- NULL until the provider confirms. Only this makes the row permanent.
+  delivered_at   TEXT,
+  UNIQUE (performance_id, band_follow_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_band_follow_notifications_lookup
+  ON band_follow_notifications(performance_id, band_follow_id, delivered_at, claimed_at);
 
 -- ============================================
 -- TEST ACCOUNTS (passwords set by scripts/setup-local-db.sh)
