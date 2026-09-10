@@ -68,9 +68,26 @@ describe("harness batch() is atomic", () => {
       db.prepare("UPDATE venues SET name = ? WHERE id = ?").bind("W", 1),
     ]);
 
-    // Callers index into this — schedule/share/[slug].js reads element 0 —
-    // so wrapping in a transaction must not change the shape.
+    // Callers index into this and read INSIDE it, so wrapping the loop in a
+    // transaction must change neither the order nor the per-statement shape.
+    // Asserting only index 0 would let a change to the mutation result pass
+    // while breaking `photos.js`, which decides its not-found race on
+    // `updateResult?.meta?.changes === 0`.
     expect(results).toHaveLength(2);
     expect(results[0].results?.[0]?.name ?? results[0][0]?.name).toBe("V");
+    expect(results[1]).toMatchObject({ success: true, meta: { changes: 1 } });
+  });
+
+  it("reports changes: 0 for a mutation that matched nothing", async () => {
+    const rawDb = createTestDB();
+    const db = createDBEnv(rawDb);
+
+    const [result] = await db.batch([db.prepare("UPDATE venues SET name = ? WHERE id = ?").bind("X", 999)]);
+
+    // The zero-row case specifically, because that is the one a caller acts on:
+    // photos.js treats `meta.changes === 0` as "the profile was deleted under
+    // us" and returns 404. A batch that reported no meta, or omitted changes,
+    // would turn that check into a silent pass.
+    expect(result).toMatchObject({ success: true, meta: { changes: 0 } });
   });
 });
