@@ -102,7 +102,8 @@ export async function onRequestGet(context) {
         a.resource_id,
         a.details,
         a.ip_address,
-        a.created_at
+        a.created_at,
+        a.api_key_id
       FROM audit_log a
       LEFT JOIN users u ON a.user_id = u.id
       ${whereClause}
@@ -126,6 +127,12 @@ export async function onRequestGet(context) {
       details: log.details ? JSON.parse(log.details) : null,
       ipAddress: log.ip_address,
       createdAt: log.created_at,
+      // Projected so the UI can distinguish a key-authenticated action from a
+      // cookie one. The column exists for exactly that question (migration
+      // 0061); NULL means a browser session. Exposed as a BOOLEAN, not the id:
+      // a viewer needs to know a key acted, and leaking which credential it was
+      // buys nothing.
+      viaApiKey: log.api_key_id !== null && log.api_key_id !== undefined,
     }));
 
     return new Response(

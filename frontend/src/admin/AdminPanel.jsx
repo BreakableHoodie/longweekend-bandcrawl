@@ -24,6 +24,7 @@ const VenuesTab = lazy(() => import('./VenuesTab'))
 const RosterTab = lazy(() => import('./RosterTab'))
 const LineupTab = lazy(() => import('./LineupTab'))
 const UserManagement = lazy(() => import('./UserManagement'))
+const AuditLogTab = lazy(() => import('./AuditLogTab'))
 const EventWizard = lazy(() => import('./EventWizard'))
 
 // events.status is the single source of truth for publish state (#799); the
@@ -174,6 +175,15 @@ export default function AdminPanel({ currentUser, onLogout }) {
     }
   }, [activeTab, isAdmin])
 
+  // Same demotion for the audit tab. Without it, a session whose role is
+  // lowered while the tab is open would sit on a screen that 403s on every
+  // refresh instead of being moved somewhere it can use.
+  useEffect(() => {
+    if (activeTab === 'audit' && !isAdmin) {
+      setActiveTab('settings')
+    }
+  }, [activeTab, isAdmin])
+
   useEffect(() => {
     if (activeTab === 'users' && !canManageUsers) {
       setActiveTab('events')
@@ -241,6 +251,10 @@ export default function AdminPanel({ currentUser, onLogout }) {
       { id: 'venues', label: 'Venues' },
       ...(canManageUsers ? [{ id: 'users', label: 'Users' }] : []),
       { id: 'settings', label: 'Settings' },
+      // Admin-only, matching the endpoint: /api/admin/audit-log calls
+      // checkPermission(context, 'admin'), so offering the tab to an editor
+      // would render a screen that can only 403.
+      ...(isAdmin ? [{ id: 'audit', label: 'Audit Log' }] : []),
       ...(isAdmin ? [{ id: 'platform', label: 'Platform' }] : []),
     ],
     [selectedEventId, canManageUsers, isAdmin]
@@ -463,6 +477,8 @@ export default function AdminPanel({ currentUser, onLogout }) {
 
             {activeTab === 'settings' && <UserSettings user={currentUser} onOpenMfa={() => setShowMfaModal(true)} />}
 
+            {activeTab === 'audit' && isAdmin && <AuditLogTab showToast={showToast} />}
+
             {activeTab === 'platform' && <PlatformSettings isAdmin={isAdmin} />}
           </Suspense>
         )}
@@ -516,6 +532,7 @@ export default function AdminPanel({ currentUser, onLogout }) {
         onTabChange={setActiveTab}
         showLineup={Boolean(selectedEventId)}
         showUsers={canManageUsers}
+        showAudit={isAdmin}
         showPlatform={isAdmin}
       />
     </div>
