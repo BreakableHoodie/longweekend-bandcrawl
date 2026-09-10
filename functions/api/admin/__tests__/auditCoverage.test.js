@@ -18,7 +18,11 @@ import { fileURLToPath } from "node:url";
  * eventVisibility's guard-2 states about its own scan.
  */
 const ADMIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const MUTATING = /export\s+(?:async\s+)?function\s+onRequest(?:Post|Put|Patch|Delete)\b/;
+// Both handler forms Pages accepts: `export async function onRequestPost` and
+// `export const onRequestPost = async (ctx) => {}`. The first version matched
+// only the declaration form, so an arrow handler was invisible to the whole
+// scan -- it would not even be CHECKED, which is worse than failing.
+const MUTATING = /export\s+(?:(?:async\s+)?function\s+|(?:const|let|var)\s+)onRequest(?:Post|Put|Patch|Delete)\b/;
 
 /**
  * A CALL, not a mention.
@@ -34,10 +38,17 @@ const MUTATING = /export\s+(?:async\s+)?function\s+onRequest(?:Post|Put|Patch|De
  */
 const AUDIT_CALL = /\bauditLog(?:Statement(?:ForInsertedRow)?)?\s*\(/;
 
-// Comments stripped before the scan so prose about auditing cannot stand in for
-// doing it -- this file's own header would otherwise satisfy its own check.
-function stripComments(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+// Comments AND string literals stripped before the scan. Prose about auditing
+// must not stand in for doing it -- this file's own header would otherwise
+// satisfy its own check -- and neither must a string that happens to contain
+// `auditLog(`, e.g. an error message or a code sample in a fixture.
+function stripNonCode(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1")
+    .replace(/`(?:\\.|[^`\\])*`/g, '""')
+    .replace(/'(?:\\.|[^'\\\n])*'/g, '""')
+    .replace(/"(?:\\.|[^"\\\n])*"/g, '""');
 }
 
 /**
@@ -64,7 +75,7 @@ function walk(dir, out = []) {
 
 const handlers = walk(ADMIN_ROOT)
   .map((full) => ({ rel: relative(ADMIN_ROOT, full), src: readFileSync(full, "utf8") }))
-  .map((h) => ({ ...h, code: stripComments(h.src) }))
+  .map((h) => ({ ...h, code: stripNonCode(h.src) }))
   .filter(({ code }) => MUTATING.test(code));
 
 describe("admin audit coverage", () => {
@@ -97,7 +108,11 @@ describe("admin audit coverage", () => {
     expect(AUDIT_CALL.test("auditLogStatementForInsertedRow(env, id)")).toBe(true);
     expect(AUDIT_CALL.test("auditLogX(env, id)")).toBe(false);
     expect(AUDIT_CALL.test("// we should auditLog this later")).toBe(false);
-    expect(stripComments("// auditLog(x)\ncode();")).not.toMatch(AUDIT_CALL);
+    expect(stripNonCode("// auditLog(x)\ncode();")).not.toMatch(AUDIT_CALL);
+    // A string containing a call is not a call.
+    expect(stripNonCode('throw new Error("call auditLog(env) first");')).not.toMatch(AUDIT_CALL);
+    // ...but real code beside a string still counts.
+    expect(stripNonCode('log("x"); await auditLog(env, id);')).toMatch(AUDIT_CALL);
   });
 
   it("every exemption carries a non-empty reason", () => {

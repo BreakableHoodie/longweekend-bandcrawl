@@ -7,6 +7,7 @@
  */
 
 import { checkPermission, auditLog } from "../_middleware.js";
+import { auditLogStatement } from "../../../utils/auditLogStatement.js";
 import { getClientIP } from "../../../utils/request.js";
 import { detectImageMimeType, MAX_FILE_SIZE, ALLOWED_IMAGE_TYPES } from "../../../utils/imageUpload.js";
 
@@ -124,9 +125,22 @@ export async function onRequestPost(context) {
     const publicUrl = `${photoBaseUrl}/${filename}`;
 
     if (bandProfileId) {
-      const updateResult = await env.DB.prepare("UPDATE band_profiles SET photo_url = ? WHERE id = ?")
-        .bind(publicUrl, bandProfileId)
-        .run();
+      // Batched, so a failed audit write cannot leave an unattributed photo
+      // change. DB.batch is atomic on D1 (which has no BEGIN/COMMIT), so the
+      // update and its audit row land together or not at all. updateResult is
+      // still read below for the not-found race, so it must stay element 0.
+      const [updateResult] = await env.DB.batch([
+        env.DB.prepare("UPDATE band_profiles SET photo_url = ? WHERE id = ?").bind(publicUrl, bandProfileId),
+        auditLogStatement(
+          env,
+          user.userId,
+          "band.photo_updated",
+          "band",
+          bandProfileId,
+          { url: publicUrl },
+          getClientIP(request),
+        ),
+      ]);
 
       // The profile existed when we looked it up, but it can be deleted between
       // that read and this write — another admin tab, a concurrent cleanup. The
@@ -149,22 +163,6 @@ export async function onRequestPost(context) {
           headers: { "Content-Type": "application/json" },
         });
       }
-    }
-
-    // A photo is content, so a change to it belongs in the log (#1143). Only
-    // logged when it was actually attached to a profile -- an upload with no
-    // bandProfileId writes to R2 and no database row, so there is no resource
-    // to attribute it to.
-    if (bandProfileId) {
-      await auditLog(
-        env,
-        user.userId,
-        "band.photo_updated",
-        "band",
-        bandProfileId,
-        { url: publicUrl },
-        getClientIP(request),
-      );
     }
 
     return new Response(

@@ -114,6 +114,12 @@ export async function onRequestDelete(context) {
     // EXISTS now, not who removed what. The session id is deliberately not in
     // the details: it is a live credential identifier, and knowing a revocation
     // happened is the point.
+    // NOT batched with the revocation, unlike the photo and poster paths.
+    // The mutation here goes through lucia, not a D1 statement this file
+    // holds, so there is nothing to put in a DB.batch alongside it. The
+    // audit row can therefore fail independently, leaving an unattributed
+    // revocation -- accepted, because the alternative is reaching around
+    // lucia's own session handling to hand-write its SQL.
     await auditLog(env, user.userId, "session.revoked", "session", null, {}, getClientIP(request));
 
     return new Response(JSON.stringify({ success: true }), {
