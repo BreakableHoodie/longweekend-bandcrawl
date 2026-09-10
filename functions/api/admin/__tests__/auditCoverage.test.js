@@ -38,17 +38,64 @@ const MUTATING = /export\s+(?:(?:async\s+)?function\s+|(?:const|let|var)\s+)onRe
  */
 const AUDIT_CALL = /\bauditLog(?:Statement(?:ForInsertedRow)?)?\s*\(/;
 
-// Comments AND string literals stripped before the scan. Prose about auditing
-// must not stand in for doing it -- this file's own header would otherwise
-// satisfy its own check -- and neither must a string that happens to contain
-// `auditLog(`, e.g. an error message or a code sample in a fixture.
+// Comments and string literals removed before the scan, so neither prose about
+// auditing nor a string containing `auditLog(` can stand in for doing it --
+// this file's own header would otherwise satisfy its own check.
+//
+// A single left-to-right pass, not a chain of replaces. The chain had an
+// ORDERING BUG that CodeRabbit proved with a probe: comments were stripped
+// first, so `const marker = "//"; await auditLog(env, id);` lost everything
+// after the string and the real call vanished. (`"https://x"` survived only
+// because the comment pattern required a non-`:` before the slashes.) Walking
+// the source once fixes it by construction -- a `//` inside a string is
+// consumed by the string branch before the comment branch can see it.
+//
+// KNOWN LIMIT: a regex literal containing `//` is read as a line comment. That
+// direction is safe -- it HIDES a call, so the guard over-reports and someone
+// investigates a red build, rather than passing something unlogged in silence.
+// Telling a regex literal from division needs real parsing, which is not worth
+// it for that trade.
 function stripNonCode(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1")
-    .replace(/`(?:\\.|[^`\\])*`/g, '""')
-    .replace(/'(?:\\.|[^'\\\n])*'/g, '""')
-    .replace(/"(?:\\.|[^"\\\n])*"/g, '""');
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const next = src[i + 1];
+
+    if (c === "/" && next === "*") {
+      const close = src.indexOf("*/", i + 2);
+      i = close === -1 ? src.length : close + 2;
+      out += " ";
+      continue;
+    }
+
+    if (c === "/" && next === "/") {
+      while (i < src.length && src[i] !== "\n") i += 1;
+      continue;
+    }
+
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      i += 1;
+      while (i < src.length) {
+        if (src[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (src[i] === quote) {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      out += '""';
+      continue;
+    }
+
+    out += c;
+    i += 1;
+  }
+  return out;
 }
 
 /**
@@ -111,6 +158,12 @@ describe("admin audit coverage", () => {
     expect(stripNonCode("// auditLog(x)\ncode();")).not.toMatch(AUDIT_CALL);
     // A string containing a call is not a call.
     expect(stripNonCode('throw new Error("call auditLog(env) first");')).not.toMatch(AUDIT_CALL);
+    // The ordering case CodeRabbit found: a bare `//` inside a string used to
+    // swallow the rest of the line, hiding a real call.
+    expect(stripNonCode('const marker = "//"; await auditLog(env, id);')).toMatch(AUDIT_CALL);
+    expect(stripNonCode('const u = "https://x"; await auditLog(env, id);')).toMatch(AUDIT_CALL);
+    // A genuine trailing comment still goes.
+    expect(stripNonCode("const x = 1; // auditLog(env)")).not.toMatch(AUDIT_CALL);
     // ...but real code beside a string still counts.
     expect(stripNonCode('log("x"); await auditLog(env, id);')).toMatch(AUDIT_CALL);
   });
