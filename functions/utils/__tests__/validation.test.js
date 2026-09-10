@@ -328,7 +328,7 @@ describe("validateDoorsJson (#569)", () => {
 // validation. These cover the read-path helpers (safeReflectHandleOrUrl /
 // safeReflectSocialLinks) that sanitize legacy/bypassed DB rows before they
 // are echoed back in API responses, plus the write-path scheme guard added
-// to the private sanitizeOptionalHandle (exercised indirectly through the
+// to the private normalizeLinkField (exercised indirectly through the
 // exported sanitizeBandSocialLinks, which routes the instagram field
 // through it).
 // ---------------------------------------------------------------------------
@@ -448,7 +448,7 @@ describe("safeReflectSocialLinksString (#493)", () => {
   });
 });
 
-describe("sanitizeOptionalHandle write-path scheme guard (#483, via sanitizeBandSocialLinks)", () => {
+describe("normalizeLinkField write-path scheme guard (#483, via sanitizeBandSocialLinks)", () => {
   it("throws when the instagram handle contains a URL scheme", () => {
     // eslint-disable-next-line no-script-url -- test fixture: intentional unsafe scheme, exercises the #483 write-path guard
     expect(() => sanitizeBandSocialLinks({ instagram: "javascript:x" })).toThrow();
