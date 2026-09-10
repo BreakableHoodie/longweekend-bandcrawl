@@ -19,7 +19,7 @@
  */
 
 import { checkPermission } from "../_middleware.js";
-import { auditLogStatement } from "../../../utils/auditLogStatement.js";
+import { auditLogStatementForInsertedRow } from "../../../utils/auditLogStatement.js";
 import { getClientIP } from "../../../utils/request.js";
 import { detectImageMimeType, MAX_FILE_SIZE, ALLOWED_IMAGE_TYPES } from "../../../utils/imageUpload.js";
 import { normalizeHttpUrl, validateId } from "../../../utils/validation.js";
@@ -122,12 +122,16 @@ export async function onRequestPost(context) {
       // attribute the change to.
       await env.DB.batch([
         env.DB.prepare("UPDATE events SET poster_url = ? WHERE id = ?").bind(normalizeHttpUrl(publicUrl), eventId),
-        auditLogStatement(
+        // Conditional, for the same reason as photos.js: the event can be deleted
+        // between the lookup and this write, and a zero-row UPDATE is a success
+        // in D1 -- so an unconditional INSERT would claim a poster change on an
+        // event that no longer exists.
+        auditLogStatementForInsertedRow(
           env,
           user.userId,
           "event.poster_updated",
           "event",
-          eventId,
+          { table: "events", where: { id: eventId } },
           { url: publicUrl },
           getClientIP(request),
         ),

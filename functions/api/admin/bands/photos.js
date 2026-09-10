@@ -7,7 +7,7 @@
  */
 
 import { checkPermission, auditLog } from "../_middleware.js";
-import { auditLogStatement } from "../../../utils/auditLogStatement.js";
+import { auditLogStatementForInsertedRow } from "../../../utils/auditLogStatement.js";
 import { getClientIP } from "../../../utils/request.js";
 import { detectImageMimeType, MAX_FILE_SIZE, ALLOWED_IMAGE_TYPES } from "../../../utils/imageUpload.js";
 
@@ -131,12 +131,17 @@ export async function onRequestPost(context) {
       // still read below for the not-found race, so it must stay element 0.
       const [updateResult] = await env.DB.batch([
         env.DB.prepare("UPDATE band_profiles SET photo_url = ? WHERE id = ?").bind(publicUrl, bandProfileId),
-        auditLogStatement(
+        // Conditional on the profile still existing. The pre-upload lookup can
+        // lose a race with a deletion, and D1 treats a zero-row UPDATE as a
+        // success -- so an unconditional INSERT would record a photo change that
+        // never happened, on a profile that is gone. INSERT ... SELECT writes
+        // nothing when the WHERE matches nothing.
+        auditLogStatementForInsertedRow(
           env,
           user.userId,
           "band.photo_updated",
           "band",
-          bandProfileId,
+          { table: "band_profiles", where: { id: bandProfileId } },
           { url: publicUrl },
           getClientIP(request),
         ),

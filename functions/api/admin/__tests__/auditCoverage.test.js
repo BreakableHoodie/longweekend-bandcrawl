@@ -18,11 +18,6 @@ import { fileURLToPath } from "node:url";
  * eventVisibility's guard-2 states about its own scan.
  */
 const ADMIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-// Both handler forms Pages accepts: `export async function onRequestPost` and
-// `export const onRequestPost = async (ctx) => {}`. The first version matched
-// only the declaration form, so an arrow handler was invisible to the whole
-// scan -- it would not even be CHECKED, which is worse than failing.
-const MUTATING = /export\s+(?:(?:async\s+)?function\s+|(?:const|let|var)\s+)onRequest(?:Post|Put|Patch|Delete)\b/;
 
 /**
  * A CALL, not a mention.
@@ -120,19 +115,50 @@ function walk(dir, out = []) {
   return out;
 }
 
+/**
+ * Split a file into its individual exported handlers.
+ *
+ * The first version applied both patterns to the WHOLE FILE, so an audit call
+ * in one handler masked a missing one in another -- and several files export
+ * more than one mutating method (photos.js is POST and DELETE). Checking per
+ * body is what makes "every change is logged" mean every change.
+ *
+ * A handler runs from its own `export` to the next one, or to end of file.
+ *
+ * The pattern covers BOTH forms Pages accepts -- `export async function
+ * onRequestPost` and `export const onRequestPost = async (ctx) => {}`. An
+ * earlier version matched only the declaration form, so an arrow handler was
+ * not flagged, it was not CHECKED, which is worse.
+ */
+function handlerBodies(code) {
+  const starts = [...code.matchAll(/export\s+(?:(?:async\s+)?function\s+|(?:const|let|var)\s+)(onRequest\w*)/g)];
+  return starts.map((m, i) => ({
+    name: m[1],
+    body: code.slice(m.index, i + 1 < starts.length ? starts[i + 1].index : code.length),
+  }));
+}
+
+const MUTATING_NAME = /^onRequest(?:Post|Put|Patch|Delete)$/;
+
 const handlers = walk(ADMIN_ROOT)
-  .map((full) => ({ rel: relative(ADMIN_ROOT, full), src: readFileSync(full, "utf8") }))
-  .map((h) => ({ ...h, code: stripNonCode(h.src) }))
-  .filter(({ code }) => MUTATING.test(code));
+  .map((full) => ({ rel: relative(ADMIN_ROOT, full), code: stripNonCode(readFileSync(full, "utf8")) }))
+  .flatMap(({ rel, code }) =>
+    handlerBodies(code)
+      .filter((h) => MUTATING_NAME.test(h.name))
+      .map((h) => ({ rel, name: h.name, id: `${rel}#${h.name}`, code: h.body })),
+  );
 
 describe("admin audit coverage", () => {
   // A scan that matches nothing reports "all clear" forever.
   it("the scan still finds the handlers it checks", () => {
     expect(handlers.length).toBeGreaterThanOrEqual(30);
+    // More handlers than files, or the per-handler split silently collapsed
+    // back to per-file and the masking this guards against would return.
+    expect(new Set(handlers.map((h) => h.rel)).size).toBeLessThan(handlers.length);
   });
 
   it("every mutating handler audits, or is exempt with a stated reason", () => {
-    const unlogged = handlers.filter(({ rel, code }) => !AUDIT_CALL.test(code) && !EXEMPT.has(rel)).map((h) => h.rel);
+    const unlogged = handlers.filter(({ rel, code }) => !AUDIT_CALL.test(code) && !EXEMPT.has(rel)).map((h) => h.id);
     expect(unlogged).toEqual([]);
   });
 
@@ -143,7 +169,7 @@ describe("admin audit coverage", () => {
     for (const rel of EXEMPT.keys()) {
       expect(mutatingPaths.has(rel), `${rel} is exempt but no longer a mutating handler`).toBe(true);
     }
-    const nowAuditing = handlers.filter((h) => EXEMPT.has(h.rel) && AUDIT_CALL.test(h.code)).map((h) => h.rel);
+    const nowAuditing = handlers.filter((h) => EXEMPT.has(h.rel) && AUDIT_CALL.test(h.code)).map((h) => h.id);
     expect(nowAuditing, "these audit now — remove their exemption").toEqual([]);
   });
 
