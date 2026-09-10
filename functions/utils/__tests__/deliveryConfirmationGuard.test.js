@@ -14,8 +14,11 @@
 import { describe, expect, test } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const FUNCTIONS_DIR = new URL("../..", import.meta.url).pathname;
+// fileURLToPath, not URL.pathname: a checkout path containing a space arrives
+// percent-encoded as %20 and readdirSync would fail on it.
+const FUNCTIONS_DIR = fileURLToPath(new URL("../..", import.meta.url));
 const CONFIRMATION_WRITE = "SET delivered_at";
 
 function sourceFiles(dir) {
@@ -34,18 +37,41 @@ function sourceFiles(dir) {
 
 // Walks backwards from `index` tracking brace depth. When the walk leaves the
 // block that encloses the position, it reports whether that block opened with
-// `try`. Comparing depth rather than searching for a nearby "try {" is what
-// stops a try block that ENDED earlier in the function from counting.
-function enclosedByTry(src, index) {
+// `try` AND is followed by a `catch`. Comparing depth rather than searching for
+// a nearby "try {" is what stops a try block that ENDED earlier in the same
+// function from counting.
+//
+// The catch requirement is not pedantry: `try { ... } finally { ... }` does NOT
+// swallow the exception -- it runs the cleanup and then rethrows. A site
+// written that way is still broken, and an earlier version of this guard
+// accepted it, which would have made the whole file report all-clear on exactly
+// the defect it exists to catch. Verified by running it, not by reading it.
+function guardedByCatch(src, index) {
   let depth = 0;
   for (let i = index; i >= 0; i--) {
     const ch = src[i];
     if (ch === "}") depth++;
     else if (ch === "{") {
       if (depth === 0) {
-        return /\btry\s*$/.test(src.slice(Math.max(0, i - 12), i));
+        if (!/\btry\s*$/.test(src.slice(Math.max(0, i - 12), i))) return false;
+        return followedByCatch(src, i);
       }
       depth--;
+    }
+  }
+  return false;
+}
+
+// Forward-scans from the try block's opening brace to its matching close, then
+// asks whether a `catch` follows it.
+function followedByCatch(src, openBrace) {
+  let depth = 0;
+  for (let i = openBrace; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return /^\s*catch\b/.test(src.slice(i + 1, i + 40));
     }
   }
   return false;
@@ -74,7 +100,7 @@ describe("delivery-confirmation writes cannot fail a delivered send", () => {
   test.each(sites.map((s) => [s.file.replace(FUNCTIONS_DIR, ""), s]))(
     "%s guards its confirmation write with try/catch",
     (_label, site) => {
-      expect(enclosedByTry(site.src, site.at)).toBe(true);
+      expect(guardedByCatch(site.src, site.at)).toBe(true);
     },
   );
 
@@ -83,7 +109,21 @@ describe("delivery-confirmation writes cannot fail a delivered send", () => {
   test("the detector reports an UNGUARDED write as unguarded", () => {
     const guarded = `async function f() { try { await DB.prepare("SET delivered_at"); } catch (e) {} }`;
     const bare = `async function f() { await DB.prepare("SET delivered_at"); }`;
-    expect(enclosedByTry(guarded, guarded.indexOf(CONFIRMATION_WRITE))).toBe(true);
-    expect(enclosedByTry(bare, bare.indexOf(CONFIRMATION_WRITE))).toBe(false);
+    expect(guardedByCatch(guarded, guarded.indexOf(CONFIRMATION_WRITE))).toBe(true);
+    expect(guardedByCatch(bare, bare.indexOf(CONFIRMATION_WRITE))).toBe(false);
+  });
+
+  // try/finally runs the cleanup and RETHROWS, so the delivered send is still
+  // reported as failed. It must not satisfy the guard.
+  test("try/finally without a catch does NOT satisfy the guard", () => {
+    const src = `async function f() { try { await DB.prepare("SET delivered_at"); } finally { done(); } }`;
+    expect(guardedByCatch(src, src.indexOf(CONFIRMATION_WRITE))).toBe(false);
+  });
+
+  // A try that CLOSED earlier in the same function must not count either --
+  // this is what the brace-depth walk buys over a nearby-text search.
+  test("a try block that already ended does not satisfy the guard", () => {
+    const src = `async function f() { try { a(); } catch (e) {} await DB.prepare("SET delivered_at"); }`;
+    expect(guardedByCatch(src, src.indexOf(CONFIRMATION_WRITE))).toBe(false);
   });
 });
