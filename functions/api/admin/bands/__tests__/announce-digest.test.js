@@ -707,4 +707,49 @@ describe("flushAnnounceDigest", () => {
       }
     });
   });
+  // Failure-path code, so it is tested by BREAKING the thing it guards -- the
+  // happy path never enters this catch. Sibling of the same case in
+  // functions/utils/__tests__/bandFollowNotify.test.js; this one was missed on
+  // the first pass and caught by review, which is the sweep working late.
+  it("counts a digest as sent when the delivery-confirmation batch fails", async () => {
+    const { env, rawDb } = createTestEnv();
+    const ev = insertEvent(rawDb, { name: "Fest", slug: "fest-confirm-fails" });
+    const venue = insertVenue(rawDb, { name: "Hall" });
+    const perf = insertBand(rawDb, { name: "The Band", event_id: ev.id, venue_id: venue.id });
+
+    const followId = rawDb
+      .prepare("INSERT INTO band_follows (email, band_profile_id, verified, unsubscribe_token) VALUES (?, ?, 1, ?)")
+      .run("fan@example.com", perf.band_profile_id, "tok-cf").lastInsertRowid;
+
+    rawDb
+      .prepare(
+        `INSERT INTO band_announce_queue
+         (band_follow_id, performance_id, event_id, band_name, event_name, event_slug, band_profile_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(followId, perf.id, ev.id, "The Band", "Fest", "fest-confirm-fails", perf.band_profile_id);
+
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+
+    // Break ONLY the confirmation batch. The claim batch must still succeed --
+    // otherwise nothing is ever sent and the test proves nothing about this
+    // branch. The two are told apart by the statement the confirmation writes.
+    const realBatch = env.DB.batch.bind(env.DB);
+    env.DB.batch = (statements) => {
+      const isConfirmation = statements.some((st) =>
+        String(st?.sql ?? st?.statement ?? "").includes("SET delivered_at"),
+      );
+      if (isConfirmation) return Promise.reject(new Error("D1 batch failed"));
+      return realBatch(statements);
+    };
+
+    const stats = await flushAnnounceDigest(env, env.DB);
+
+    // The email went out. Reporting it failed would invite the resend that is
+    // the one action turning a lost write into a duplicate (#1153).
+    expect(sendEmail).toHaveBeenCalledOnce();
+    expect(stats.sent).toBe(1);
+    expect(stats.failed).toBe(0);
+    expect(errorSpy).toHaveBeenCalled();
+  });
 });

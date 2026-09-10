@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createTestEnv, insertEvent } from "../../../test-utils.js";
 import * as handler from "../[id]/notify-subscribers.js";
 import { MAX_PER_INVOCATION, notifySubscribers, pendingSubscribers } from "../../../../utils/subscriberNotify.js";
+import { logger } from "../../../../utils/logger.js";
 
 vi.mock("../../../../utils/email.js", () => ({
   sendEmail: vi.fn(),
@@ -298,5 +299,47 @@ describe("POST /api/admin/events/[id]/notify-subscribers", () => {
     const res = await post(env, headers, ev.id, { kind: "schedule_announced" });
     expect(res.status).toBe(403);
     expect(sendEmail).not.toHaveBeenCalled();
+  });
+  // Third instance of the confirmation-failure class (#1152 review sweep).
+  // The band-follow sender and the announce digest had the same shape; this one
+  // shipped in #1149 and was found only by sweeping for the class rather than
+  // fixing the two the reviewer named.
+  //
+  // Failure-path code, so it is tested by BREAKING the thing it guards.
+  it("counts a send as sent when the delivery-confirmation write fails", async () => {
+    const { env, rawDb } = createTestEnv({ role: "admin" });
+    const ev = insertEvent(rawDb, { name: "Vol. 18", slug: "lwbc18" });
+    publish(rawDb, ev.id);
+    sub(rawDb, { email: "a@example.com", verified: 1 });
+
+    const args = {
+      eventId: ev.id,
+      kind: "schedule_announced",
+      eventName: "Vol. 18",
+      eventSlug: "lwbc18",
+      subject: "s",
+      lead: "l",
+    };
+    const list = await pendingSubscribers(env.DB, { eventId: ev.id, kind: "schedule_announced" });
+    expect(list).toHaveLength(1);
+
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+
+    // Break ONLY the confirmation write; the claim must still succeed, or
+    // nothing is ever sent and the test proves nothing about this branch.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = (sql) => {
+      if (sql.includes("SET delivered_at")) throw new Error("D1 write failed");
+      return realPrepare(sql);
+    };
+
+    const result = await notifySubscribers(env, env.DB, { ...args, subscribers: list });
+
+    // The email went out. Reporting it failed would invite the resend that is
+    // the one action turning a lost write into a duplicate (#1153).
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect(result.sent).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(errorSpy).toHaveBeenCalled();
   });
 });

@@ -236,13 +236,30 @@ export async function flushAnnounceDigest(env, DB) {
       // abandoned and retryable, so a successful send left unmarked would be
       // RE-MAILED fifteen minutes later -- strictly worse than the stranding
       // this change fixes.
-      await DB.batch(
-        task.claimed.map((item) =>
-          DB.prepare(
-            "UPDATE band_follow_notifications SET delivered_at = datetime('now') WHERE performance_id = ? AND band_follow_id = ?",
-          ).bind(item.performance_id, item.band_follow_id),
-        ),
-      );
+      //
+      // The batch is caught locally for the same reason its sibling in
+      // bandFollowNotify.js is: the mail has already gone out and cannot be
+      // recalled. Letting a rejection escape sendOne would hand it to
+      // Promise.allSettled, which counts it as a FAILED send -- reporting a
+      // delivered email as failed, and inviting the resend that turns a lost
+      // write into a duplicate. The row does stay retryable until #1153 adds a
+      // provider idempotency key; the log is what makes that visible.
+      try {
+        await DB.batch(
+          task.claimed.map((item) =>
+            DB.prepare(
+              "UPDATE band_follow_notifications SET delivered_at = datetime('now') WHERE performance_id = ? AND band_follow_id = ?",
+            ).bind(item.performance_id, item.band_follow_id),
+          ),
+        );
+      } catch (confirmError) {
+        logStrandedClaims(
+          task,
+          "announce digest delivery confirmation failed; email WAS sent, claims may be retried",
+          confirmError,
+        );
+      }
+      // Outside the try on purpose: it was sent.
       sent++;
     } else {
       // Release claims so resend-announcement can recover this fan.

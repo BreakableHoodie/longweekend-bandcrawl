@@ -38,13 +38,21 @@ WINDOW_SECONDS=3600
 #     "3 reviews are currently available. Your included PR review attempts over
 #      the past 7 days set your current allowance at 4 reviews per hour."
 #
+#   2026-09-10, PR #1154:
+#     "0 reviews are currently available. Your included PR review attempts over
+#      the past 7 days set your current allowance at 3 reviews per hour."
+#
+# Three readings, three different numbers -- 1, 4, 3 -- which is the strongest
+# evidence yet that no value written here survives. It fell from 4 to 3 as this
+# week's usage rose, so it moves in BOTH directions.
+#
 # So the allowance recovers as 7-day usage falls, and no static number stays
 # right. The hook cannot ask -- it is deliberately POSIX sh with no gh, jq or
 # network call, because one that fails open when a tool is missing is worse
 # than no hook at all.
 #
-# LIMIT tracks the most recent observed footer. It was 1 while that was the
-# observed figure; it is 4 because 2026-09-09 says so. The rule is unchanged:
+# LIMIT tracks the most recent observed footer. It was 1, then 4; it is 3
+# because 2026-09-10 says so. The rule is unchanged:
 # move it only against a CURRENT footer, never from memory. The value being
 # an OBSERVATION WITH A DATE is the point -- if these comments are stale, the
 # number above them is too.
@@ -52,7 +60,7 @@ WINDOW_SECONDS=3600
 # Erring low is not free. Blocking a push when three reviews are genuinely
 # available teaches you to reach for CODERABBIT_OVERAGE reflexively, and an
 # override you always use is not a guard.
-LIMIT=4
+LIMIT=3
 WARN_AT=2
 DEFAULT_BRANCH=main
 

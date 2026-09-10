@@ -785,6 +785,31 @@ combined guarantee rather than evidence for it.
 
 Both sender-level tests are in the mutation gate.
 
+**A confirmation write must never be able to fail a delivered send.** Sending
+and recording are two phases with no atomicity between them. If the
+confirmation write throws and the throw ESCAPES, the caller's
+`Promise.allSettled` tally counts a **delivered** email as failed -- which
+invites the resend that turns a lost write into a duplicate. So each of these
+is caught locally, logged, and still counted as sent, because it was.
+
+There were **three** such sites at once, and the count is the lesson:
+`bandFollowNotify.js`, `announceDigest.js` and `subscriberNotify.js`. Only the
+first was written guarded; the second was named by review, and the third --
+shipped in #1149 -- was found only by sweeping the class afterwards. Nothing
+about an unguarded `await` at one of those call sites looks wrong locally.
+
+`functions/utils/__tests__/deliveryConfirmationGuard.test.js` retires the class:
+it discovers every non-test `SET delivered_at` write, asserts each is enclosed
+by a `try` (by brace depth, so a try block that *ended* earlier in the same
+function does not count), asserts it still finds at least three, and asserts its
+own detector can return **false** -- otherwise every case passes vacuously.
+
+The remaining window is the provider's: a send confirmed by the provider whose
+local record is lost stays retryable. **#1153** tracks the real fix, a
+provider-side idempotency key, which has to be keyed per *task* in
+`announceDigest.js` (one email covers several claimed rows) and per
+`(performance, follower)` in `bandFollowNotify.js`.
+
 ## Band Announcements
 
 Band follows are **double opt-in**: `POST /api/bands/:name/follow` creates the row `verified = 0` with a `verification_token` and sends only a confirmation email. Clicking the link hits `GET /api/bands/:name/confirm-follow?token=…`, which sets `verified = 1` and clears the token (idempotent). Announcement emails target `verified = 1` followers **only** (the `WHERE … verified = 1` filter in `admin/bands/[id].js` and `resend-announcement.js`), so an address the submitter doesn't control can never be enrolled in the announcement stream — it receives at most one confirmation email. **Do not revert follow to auto-verify (`verified = 1` on insert)** — it reopens the email-bombing vector.
@@ -1420,10 +1445,17 @@ two values:
 > available. Your included PR review attempts over the past 7 days set your
 > current allowance at **4 reviews per hour**. **Plan**: Essentials
 
-So it **recovers** as 7-day usage falls; it does not only shrink. That is the
-durable fact, and it is why no number written here stays true — including these
-two. `.githooks/pre-push` tracks the most recent observed footer (`LIMIT=4` as
-of 2026-09-09) and records both observations in its own comments, so a stale
+<!-- a third quote, one day later -->
+
+> 2026-09-10, #1154 — **Included review availability:** 0 reviews are currently
+> available. Your included PR review attempts over the past 7 days set your
+> current allowance at **3 reviews per hour**. **Plan**: Essentials
+
+Three readings, three different numbers — 1, then 4, then 3. It **recovers** as
+7-day usage falls and **falls** as usage rises, so it moves in both directions.
+That is the durable fact, and it is why no number written here stays true —
+including these three. `.githooks/pre-push` tracks the most recent observed
+footer (`LIMIT=3` as of 2026-09-10) and records both observations in its own comments, so a stale
 value is visible as a stale date rather than as a bare constant. Move it only
 against a CURRENT footer.
 
