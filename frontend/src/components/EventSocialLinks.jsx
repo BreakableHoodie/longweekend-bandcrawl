@@ -1,20 +1,27 @@
-import { InstagramIcon, TikTokIcon, XIcon } from './ui/SocialIcons'
-import { safeInstagramHref, safeTikTokHref, safeXHref } from '../utils/urlSafety'
+import { FacebookIcon, InstagramIcon, TikTokIcon, XIcon } from './ui/SocialIcons'
+import { safeExternalHref, safeInstagramHref, safeTikTokHref, safeXHref } from '../utils/urlSafety'
 
-// Order mirrors the server's reflected keys (functions/api/schedule.js
-// safeReflectSocialLinks(event.social_links, ["instagram", "x", "tiktok"])).
-// All three are handle-or-URL fields on the read path
-// (safeReflectHandleOrUrl). Since #1132 the WRITE path stores a canonical URL
-// for every event link field, so newly-entered values arrive here already
-// resolved -- but rows written before that still hold a bare handle, and the
-// read path still tolerates one, so these helpers stay.
-// so each needs its handle-aware href helper here too — a plain
-// safeExternalHref would silently drop the bare-handle form the admin form
-// itself recommends ("@handle or URL").
+// THIS ARRAY is what decides which event socials a fan sees. The server does
+// not filter: safeReflectSocialLinks iterates every key in the stored object,
+// and its second argument is a HANDLE-FIELDS list -- which keys tolerate a bare
+// handle on read -- not a whitelist. So `website`, `youtube` and `bandcamp` are
+// already sent to the client and simply have no entry here.
+//
+// Keeping them out is deliberate. `website` duplicates `ticket_url`, which
+// already renders and is the link that actually sells a ticket; `youtube` and
+// `bandcamp` are artist-shaped, and the lineup already links per-artist.
+// Facebook earns its place because a Facebook event page is event-shaped
+// infrastructure for a show.
+//
+// instagram/x/tiktok use handle-aware helpers because rows written before #1132
+// may still hold a bare handle. Facebook has no such legacy -- it was URL-only
+// on the write path before #1132 and canonical after -- so safeExternalHref is
+// right: it drops a non-URL rather than guessing a host from it.
 const SOCIAL_CONFIG = [
   { key: 'instagram', label: 'Instagram', Icon: InstagramIcon, getHref: safeInstagramHref },
   { key: 'x', label: 'X', Icon: XIcon, getHref: safeXHref },
   { key: 'tiktok', label: 'TikTok', Icon: TikTokIcon, getHref: safeTikTokHref },
+  { key: 'facebook', label: 'Facebook', Icon: FacebookIcon, getHref: safeExternalHref },
 ]
 
 /**
