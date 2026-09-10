@@ -135,9 +135,19 @@ export async function onRequestGet(context) {
       viaApiKey: log.api_key_id !== null && log.api_key_id !== undefined,
     }));
 
+    // Facets, not derived from the page. The UI's action filter used to be built
+    // from whatever happened to be in the current 50 rows, so a valid but less
+    // frequent action simply could not be selected -- and the older the action,
+    // the less selectable it was, which is backwards for an audit log.
+    //
+    // Unfiltered on purpose: these are the choices AVAILABLE, so narrowing them
+    // by the active filter would let one selection erase the others.
+    const { results: actionRows } = await DB.prepare("SELECT DISTINCT action FROM audit_log ORDER BY action").all();
+
     return new Response(
       JSON.stringify({
         logs: parsedLogs,
+        availableActions: (actionRows || []).map((r) => r.action),
         total,
         limit,
         offset,

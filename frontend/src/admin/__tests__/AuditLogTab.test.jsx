@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import AuditLogTab from '../AuditLogTab'
-import { auditLogApi } from '../../utils/adminApi'
+import { auditLogApi, usersApi } from '../../utils/adminApi'
 
 vi.mock('../../utils/adminApi', () => ({
   auditLogApi: { list: vi.fn() },
+  usersApi: { getAll: vi.fn() },
 }))
 
 const entry = (over = {}) => ({
@@ -22,7 +23,10 @@ const entry = (over = {}) => ({
   ...over,
 })
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  usersApi.getAll.mockResolvedValue([])
+})
 
 describe('AuditLogTab', () => {
   it('renders an entry with who, what and when', async () => {
@@ -106,5 +110,74 @@ describe('AuditLogTab', () => {
     await screen.findByRole('table')
 
     expect(screen.queryByRole('button', { name: 'Next' })).toBeNull()
+  })
+})
+
+describe('AuditLogTab — review findings (#1144)', () => {
+  const entryFor = (over = {}) => ({
+    id: 1,
+    userId: 1,
+    userEmail: 'dre@example.com',
+    userName: 'Dre',
+    action: 'band.updated',
+    resourceType: 'band',
+    resourceId: 'profile_1',
+    details: null,
+    ipAddress: '203.0.113.7',
+    createdAt: '2026-09-09 15:22:03',
+    viaApiKey: false,
+    ...over,
+  })
+
+  it('offers the actions the SERVER reports, not just those on this page', async () => {
+    auditLogApi.list.mockResolvedValue({
+      logs: [entryFor({ action: 'band.updated' })],
+      total: 1,
+      // Present in the table but absent from this page. Deriving options from
+      // `logs` made these unselectable, and the rarer the action the less
+      // selectable it was — backwards for an audit log.
+      availableActions: ['band.updated', 'user.deleted', 'event.archived'],
+    })
+    render(<AuditLogTab showToast={vi.fn()} />)
+    await screen.findByRole('table')
+
+    const select = screen.getByLabelText('Action')
+    expect(within(select).getByRole('option', { name: 'user.deleted' })).toBeInTheDocument()
+    expect(within(select).getByRole('option', { name: 'event.archived' })).toBeInTheDocument()
+  })
+
+  it('filters by user, server-side', async () => {
+    usersApi.getAll.mockResolvedValue([{ id: 7, name: 'Sam', email: 's@x.co' }])
+    auditLogApi.list.mockResolvedValue({ logs: [entryFor()], total: 1, availableActions: [] })
+    render(<AuditLogTab showToast={vi.fn()} />)
+    await screen.findByRole('table')
+    await waitFor(() => expect(screen.getByLabelText('User')).toBeInTheDocument())
+
+    fireEvent.change(screen.getByLabelText('User'), { target: { value: '7' } })
+
+    await waitFor(() => {
+      expect(auditLogApi.list).toHaveBeenLastCalledWith(expect.objectContaining({ userId: '7' }))
+    })
+  })
+
+  it('ignores a stale response that resolves after a newer one', async () => {
+    let releaseFirst
+    const first = new Promise(resolve => {
+      releaseFirst = () => resolve({ logs: [entryFor({ action: 'STALE' })], total: 999, availableActions: [] })
+    })
+    auditLogApi.list
+      .mockReturnValueOnce(first)
+      .mockResolvedValue({ logs: [entryFor({ action: 'CURRENT' })], total: 1, availableActions: [] })
+
+    render(<AuditLogTab showToast={vi.fn()} />)
+    // Second request supersedes the first while it is still in flight.
+    fireEvent.change(screen.getByLabelText('Resource'), { target: { value: 'event' } })
+    await screen.findByRole('table')
+    expect(screen.getByRole('table')).toHaveTextContent('CURRENT')
+
+    // The earlier request lands late. It must not replace what is on screen.
+    releaseFirst()
+    await waitFor(() => expect(screen.getByRole('table')).toHaveTextContent('CURRENT'))
+    expect(screen.getByRole('table')).not.toHaveTextContent('STALE')
   })
 })

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import PropTypes from 'prop-types'
-import { auditLogApi } from '../utils/adminApi'
+import { auditLogApi, usersApi } from '../utils/adminApi'
 
 /**
  * Audit Log — who did what, and whether by API key or browser session (#1142).
@@ -58,20 +58,39 @@ function AuditLogTab({ showToast }) {
   const [error, setError] = useState(null)
   const [actionFilter, setActionFilter] = useState('')
   const [resourceFilter, setResourceFilter] = useState('')
+  const [userFilter, setUserFilter] = useState('')
+  const [users, setUsers] = useState([])
+  // Actions come from the SERVER, across the whole table. Deriving them from
+  // the current page meant a valid but less frequent action could not be
+  // selected -- and the older an action, the less selectable it was, which is
+  // backwards for an audit log.
+  const [availableActions, setAvailableActions] = useState([])
+
+  // Monotonic request id. Filters and paging fire overlapping requests, and
+  // without this an EARLIER response arriving late overwrites a newer one --
+  // leaving the controls showing one filter and the table showing another.
+  const requestSeq = useRef(0)
 
   const load = useCallback(async () => {
+    const seq = requestSeq.current + 1
+    requestSeq.current = seq
     setLoading(true)
     setError(null)
     try {
       const data = await auditLogApi.list({
         action: actionFilter || undefined,
         resourceType: resourceFilter || undefined,
+        userId: userFilter || undefined,
         limit: PAGE_SIZE,
         offset,
       })
+      // A response that is no longer the latest is discarded, not rendered.
+      if (requestSeq.current !== seq) return
       setLogs(data.logs ?? [])
       setTotal(data.total ?? 0)
+      if (Array.isArray(data.availableActions)) setAvailableActions(data.availableActions)
     } catch (err) {
+      if (requestSeq.current !== seq) return
       // Surfaced, never swallowed: an empty table and a failed fetch look
       // identical otherwise, and "no activity" is a very different claim from
       // "we could not read the activity".
@@ -80,13 +99,24 @@ function AuditLogTab({ showToast }) {
       setTotal(0)
       showToast?.('Failed to load the audit log', 'error')
     } finally {
-      setLoading(false)
+      if (requestSeq.current === seq) setLoading(false)
     }
-  }, [actionFilter, resourceFilter, offset, showToast])
+  }, [actionFilter, resourceFilter, userFilter, offset, showToast])
 
   useEffect(() => {
     load()
   }, [load])
+
+  // Loaded once. The filter needs names, and the endpoint takes a user_id --
+  // a free-text id box would be a worse control for the same capability.
+  useEffect(() => {
+    usersApi
+      .getAll()
+      .then(data => setUsers(Array.isArray(data) ? data : (data?.users ?? [])))
+      // A failed user list must not break the log itself; the filter simply
+      // offers nothing rather than the tab erroring.
+      .catch(() => setUsers([]))
+  }, [])
 
   // Any filter change returns to the first page. Without this, filtering while
   // on page 5 can land on an empty page of a shorter result set, which reads as
@@ -96,7 +126,6 @@ function AuditLogTab({ showToast }) {
     setOffset(0)
   }
 
-  const actions = useMemo(() => [...new Set(logs.map(l => l.action))].sort(), [logs])
   const page = Math.floor(offset / PAGE_SIZE) + 1
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
@@ -121,7 +150,7 @@ function AuditLogTab({ showToast }) {
             className="min-h-[44px] px-3 py-2 rounded bg-bg-navy text-white border border-gray-600 focus:border-accent-500 focus:outline-hidden"
           >
             <option value="">All actions</option>
-            {actions.map(a => (
+            {availableActions.map(a => (
               <option key={a} value={a}>
                 {a}
               </option>
@@ -143,6 +172,25 @@ function AuditLogTab({ showToast }) {
             {RESOURCE_TYPES.map(r => (
               <option key={r} value={r}>
                 {r}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="audit-user" className="block text-white mb-2 text-sm font-medium">
+            User
+          </label>
+          <select
+            id="audit-user"
+            value={userFilter}
+            onChange={e => changeFilter(setUserFilter)(e.target.value)}
+            className="min-h-[44px] px-3 py-2 rounded bg-bg-navy text-white border border-gray-600 focus:border-accent-500 focus:outline-hidden"
+          >
+            <option value="">All users</option>
+            {users.map(u => (
+              <option key={u.id} value={u.id}>
+                {u.name || u.email}
               </option>
             ))}
           </select>
