@@ -121,3 +121,34 @@ describe('EventSocialLinks', () => {
     expect(screen.getByRole('link', { name: 'Instagram' })).toBeInTheDocument()
   })
 })
+
+describe('EventSocialLinks — Facebook (#1141)', () => {
+  it('renders a Facebook link when the event has one', () => {
+    render(
+      <EventSocialLinks socialLinks={{ facebook: 'https://www.facebook.com/buddiesfest' }} eventName="Buddies Fest 2" />
+    )
+    const link = screen.getByRole('link', { name: /Buddies Fest 2 on Facebook/i })
+    expect(link).toHaveAttribute('href', 'https://www.facebook.com/buddiesfest')
+  })
+
+  // The server sends every stored field; SOCIAL_CONFIG is the only filter. So
+  // these must be asserted absent here, or "we deliberately don't show them"
+  // has nothing holding it in place.
+  it.each(['website', 'youtube', 'bandcamp'])('does not render %s, which the server also sends', key => {
+    const { container } = render(
+      <EventSocialLinks
+        socialLinks={{ [key]: 'https://example.com/x', facebook: 'https://facebook.com/y' }}
+        eventName="E"
+      />
+    )
+    // Facebook proves the component rendered at all, so the absence below is
+    // a real omission rather than an empty render.
+    expect(screen.getByRole('link', { name: /E on Facebook/i })).toBeInTheDocument()
+    expect(container.querySelectorAll('a')).toHaveLength(1)
+  })
+
+  it('drops a non-URL rather than guessing a host', () => {
+    const { container } = render(<EventSocialLinks socialLinks={{ facebook: 'buddiesfest' }} eventName="E" />)
+    expect(container.querySelectorAll('a')).toHaveLength(0)
+  })
+})
