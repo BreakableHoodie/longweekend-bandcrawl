@@ -55,6 +55,28 @@ vi.mock('../components/BandForm', () => ({
   ),
 }))
 
+// Stubbed for the same reason as BandForm: this file tests LineupTab's WIRING,
+// and ScheduleGrid's internals have their own file. The stub exposes onSave so
+// a test can drive the exact payload shape the real grid produces.
+vi.mock('../components/ScheduleGrid', () => ({
+  default: ({ onSave, saving, readOnly }) => (
+    <div data-testid="schedule-grid">
+      <span data-testid="schedule-saving">{String(saving)}</span>
+      <span data-testid="schedule-readonly">{String(readOnly)}</span>
+      <button
+        onClick={() =>
+          onSave([
+            { id: 1, startTime: '20:00', endTime: '21:00', venueId: 2 },
+            { id: 2, startTime: '22:00', endTime: '23:00', venueId: 3 },
+          ])
+        }
+      >
+        Trigger schedule save
+      </button>
+    </div>
+  ),
+}))
+
 vi.mock('../components/ArtistPicker', () => ({
   default: ({ onSelect, onCancel }) => (
     <div data-testid="artist-picker">
@@ -818,5 +840,105 @@ describe('LineupTab — bulk move-venue preview and confirm', () => {
 
     await waitFor(() => expect(showToast).toHaveBeenCalledWith('Preview failed', 'error'))
     expect(screen.queryByTestId('bulk-preview-modal')).not.toBeInTheDocument()
+  })
+})
+
+// The schedule-mode wiring (#1157). ScheduleGrid has its own tests; what those
+// cannot reach is LineupTab's own save handler -- and that is where the payload
+// keys are actually chosen.
+//
+// Proven necessary by mutation before being written: rewriting the handler's
+// body to snake_case (start_time/end_time/venue_id) left ALL 580 admin tests
+// green. The PUT handler only writes keys it recognises, so that mutation
+// silently writes nothing in production -- exactly the failure this covers.
+describe('LineupTab — schedule mode', () => {
+  const twoBands = [
+    makeBand({ id: 1, name: 'Headliner' }),
+    makeBand({ id: 2, name: 'Support', start_time: '19:00', end_time: '19:45' }),
+  ]
+
+  const openSchedule = async () => {
+    render(<LineupTab selectedEventId={37} selectedEvent={makeEvent()} events={[makeEvent()]} showToast={showToast} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Schedule/i }))
+    return screen.findByTestId('schedule-grid')
+  }
+
+  beforeEach(() => {
+    showToast.mockReset()
+    bandsApi.update.mockReset()
+    bandsApi.getByEvent.mockReset()
+    bandsApi.getByEvent.mockResolvedValue(twoBands)
+    venuesApi.getAll.mockResolvedValue([{ id: 2, name: 'Blue Room' }])
+  })
+
+  it('sends camelCase keys to bandsApi.update, one call per changed row', async () => {
+    bandsApi.update.mockResolvedValue({ success: true })
+    await openSchedule()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Trigger schedule save' }))
+
+    await waitFor(() => expect(bandsApi.update).toHaveBeenCalledTimes(2))
+    // camelCase is load-bearing: the PUT handler updates only the keys it
+    // recognises, so snake_case here writes nothing and reports success.
+    expect(bandsApi.update).toHaveBeenCalledWith(1, { startTime: '20:00', endTime: '21:00', venueId: 2 })
+    expect(bandsApi.update).toHaveBeenCalledWith(2, { startTime: '22:00', endTime: '23:00', venueId: 3 })
+  })
+
+  it('reports a partial save as an error naming how many failed', async () => {
+    // A partial save is a normal outcome here, not an exception -- one bad row
+    // must not discard the rows that saved.
+    bandsApi.update.mockResolvedValueOnce({ success: true }).mockRejectedValueOnce(new Error('venue required'))
+    await openSchedule()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Trigger schedule save' }))
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.stringContaining('Saved 1 of 2'), 'error'))
+  })
+
+  it('toasts success and reloads the lineup when every row saves', async () => {
+    bandsApi.update.mockResolvedValue({ success: true })
+    await openSchedule()
+    const loadsBefore = bandsApi.getByEvent.mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: 'Trigger schedule save' }))
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('Saved 2 of 2 changes', 'success'))
+    // Without the reload the grid keeps comparing drafts against stale
+    // originals, so saved rows would stay marked unsaved.
+    expect(bandsApi.getByEvent.mock.calls.length).toBeGreaterThan(loadsBefore)
+  })
+  it('says the list is stale when every row saved but the reload failed', async () => {
+    // The rows DID save. Folding a reload failure into the failure count would
+    // be a lie that invites a pointless re-save; what the operator needs to
+    // know is that the times on screen are no longer what the server holds.
+    bandsApi.update.mockResolvedValue({ success: true })
+    bandsApi.getByEvent.mockResolvedValueOnce(twoBands).mockRejectedValueOnce(new Error('network down'))
+    render(<LineupTab selectedEventId={37} selectedEvent={makeEvent()} events={[makeEvent()]} showToast={showToast} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Schedule/i }))
+    await screen.findByTestId('schedule-grid')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Trigger schedule save' }))
+
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(
+        expect.stringContaining('Saved 2 of 2 changes. Could not refresh the list'),
+        'error'
+      )
+    )
+  })
+  it('explains a conflict failure instead of just counting it', async () => {
+    // The PUT rejects a conflicting time with 409, so swapping two sets' times
+    // fails BOTH halves — each new time clashes with the other row, which
+    // still holds it. A bare "2 failed" on a reorder reads as a bug; naming
+    // the conflict tells the operator what to do about it (#1161).
+    const conflictError = new Error('Time conflict detected')
+    bandsApi.update.mockRejectedValue(conflictError)
+    render(<LineupTab selectedEventId={37} selectedEvent={makeEvent()} events={[makeEvent()]} showToast={showToast} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Schedule/i }))
+    await screen.findByTestId('schedule-grid')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Trigger schedule save' }))
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.stringContaining('free slot first'), 'error'))
   })
 })

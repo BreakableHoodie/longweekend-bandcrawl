@@ -7,6 +7,7 @@ import BulkActionBar from './components/BulkActionBar'
 import BulkPreviewModal from './components/BulkPreviewModal'
 import BulkBandImport from './components/BulkBandImport'
 import ArtistPicker from './components/ArtistPicker'
+import ScheduleGrid from './components/ScheduleGrid'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
 import { parseOrigin } from '../utils/parseOrigin'
 import {
@@ -55,10 +56,11 @@ export default function LineupTab({ selectedEventId, selectedEvent, events, show
   const [rosterLoading, setRosterLoading] = useState(false)
   const [announcementPlanning, setAnnouncementPlanning] = useState([]) // #556 engagement signals
 
-  // Modes: 'list', 'picker', 'form'
+  // Modes: 'list', 'picker', 'form', 'import', 'schedule'
   const [viewMode, setViewMode] = useState('list')
   const [editingId, setEditingId] = useState(null)
   const [selectedProfile, setSelectedProfile] = useState(null)
+  const [scheduleSaving, setScheduleSaving] = useState(false)
 
   const [sortConfig, setSortConfig] = useState({ key: 'start_time', direction: 'asc' })
   const [searchTerm, setSearchTerm] = useState('')
@@ -115,8 +117,15 @@ export default function LineupTab({ selectedEventId, selectedEvent, events, show
 
       setVenues(venuesRes.venues || [])
       setBands(bandsRes.bands || [])
+      return true
     } catch (err) {
       showToast('Failed to load schedule: ' + err.message, 'error')
+      // Returns a boolean rather than rethrowing: every existing caller
+      // ignores the result and must keep working unchanged. Only the schedule
+      // save needs to know, because a save that succeeds against a reload that
+      // fails leaves the grid showing STALE values -- which reads as "my edit
+      // did not take" when in fact it did.
+      return false
     } finally {
       setLoading(false)
     }
@@ -558,6 +567,66 @@ export default function LineupTab({ selectedEventId, selectedEvent, events, show
     }
   }
 
+  // Schedule mode (#1157): one row per set, saved in a single action instead
+  // of the 15-round-trip Edit -> form -> Save loop. ScheduleGrid hands back
+  // only the rows the admin actually touched; this is the one place that
+  // calls bandsApi.update for them. Promise.allSettled is required, not
+  // Promise.all — a partial failure (one bad venue among 12 saves) must not
+  // discard the 11 that succeeded, and the settled results are what let us
+  // report exactly which ids failed so ScheduleGrid can keep those rows
+  // dirty for a retry instead of losing the edit.
+  const handleScheduleSave = async changedRows => {
+    setScheduleSaving(true)
+    try {
+      const results = await Promise.allSettled(
+        changedRows.map(row =>
+          bandsApi.update(row.id, { startTime: row.startTime, endTime: row.endTime, venueId: row.venueId })
+        )
+      )
+      const failedIds = results
+        .map((result, index) => (result.status === 'rejected' ? changedRows[index].id : null))
+        .filter(id => id != null)
+
+      // Rows are saved independently, and the PUT rejects a conflicting time
+      // with 409. So SWAPPING two sets' times fails both halves: each new time
+      // clashes with the other row, which still holds it. Running them in
+      // parallel does not help and neither would ordering them.
+      //
+      // Saying so is the point. A bare "2 failed" on a reorder reads as a bug;
+      // naming the conflict tells the operator to move one set to a free slot
+      // first. The real fix is an atomic multi-row endpoint that validates the
+      // whole draft at once — filed rather than smuggled in here (#1161).
+      const anyConflict = results.some(
+        result => result.status === 'rejected' && /conflict/i.test(result.reason?.message ?? '')
+      )
+
+      const reloaded = await loadData()
+
+      const succeededCount = changedRows.length - failedIds.length
+      const summary = `Saved ${succeededCount} of ${changedRows.length} change${changedRows.length === 1 ? '' : 's'}`
+      // A failed reload is reported, never folded into the failure count. The
+      // rows DID save; calling them failed would be a lie that invites a
+      // pointless re-save. What the operator actually needs to know is that
+      // the list on screen is now stale.
+      const caveats = [
+        failedIds.length > 0
+          ? `${failedIds.length} failed — retry the highlighted rows.${
+              anyConflict ? ' Swapping two set times needs one moved to a free slot first.' : ''
+            }`
+          : '',
+        reloaded ? '' : 'Could not refresh the list, so it may show stale times — reload the page.',
+      ].filter(Boolean)
+      showToast(
+        caveats.length > 0 ? `${summary}. ${caveats.join(' ')}` : summary,
+        failedIds.length > 0 || !reloaded ? 'error' : 'success'
+      )
+
+      return { failedIds }
+    } finally {
+      setScheduleSaving(false)
+    }
+  }
+
   if (!selectedEventId)
     return <div className="p-8 text-center text-white/50">Select an event to manage its lineup.</div>
 
@@ -570,6 +639,12 @@ export default function LineupTab({ selectedEventId, selectedEvent, events, show
         </div>
         {viewMode === 'list' && !readOnly && (
           <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setViewMode('schedule')}
+              className="px-6 py-3 bg-bg-purple text-white rounded hover:bg-bg-purple/80 transition-colors font-medium min-h-[44px] border border-accent-500/30"
+            >
+              Schedule
+            </button>
             <button
               onClick={() => setViewMode('import')}
               className="px-6 py-3 bg-bg-purple text-white rounded hover:bg-bg-purple/80 transition-colors font-medium min-h-[44px] border border-accent-500/30"
@@ -614,6 +689,21 @@ export default function LineupTab({ selectedEventId, selectedEvent, events, show
               setViewMode('list')
               if (showToast) showToast('Bands imported', 'success')
             }}
+          />
+        </div>
+      )}
+
+      {viewMode === 'schedule' && !readOnly && (
+        <div className="space-y-3">
+          <button onClick={() => setViewMode('list')} className="text-sm text-white/70 hover:text-white">
+            ← Back to lineup
+          </button>
+          <ScheduleGrid
+            bands={bands}
+            venues={venues}
+            eventDate={selectedEvent?.date}
+            onSave={handleScheduleSave}
+            saving={scheduleSaving}
           />
         </div>
       )}
