@@ -186,18 +186,35 @@ export async function notifySubscribers(env, DB, { eventId, kind, eventName, eve
 
     // Delivery confirmed by the provider. ONLY now is the row a delivery
     // record, and only now is it permanent.
-    await DB.prepare(
-      "UPDATE subscription_notifications SET delivered_at = datetime('now') WHERE subscription_id = ? AND event_id = ? AND kind = ?",
-    )
-      .bind(sub.id, eventId, kind)
-      .run();
+    //
+    // Caught locally because the mail has already gone out and cannot be
+    // recalled. A rejection escaping sendOne reaches the Promise.allSettled
+    // tally below, where `r.status !== "fulfilled"` counts it as FAILED -- a
+    // delivered email reported as a failure, which invites the resend that
+    // turns a lost write into a duplicate. The row stays retryable until #1153
+    // adds a provider idempotency key; the log is what makes that visible.
+    try {
+      await DB.prepare(
+        "UPDATE subscription_notifications SET delivered_at = datetime('now') WHERE subscription_id = ? AND event_id = ? AND kind = ?",
+      )
+        .bind(sub.id, eventId, kind)
+        .run();
 
-    // Bookkeeping only -- `last_email_sent` predates this sender and had never
-    // been written by anything. Not used for gating: the notifications table is
-    // the record, because one timestamp cannot say WHICH notice was received.
-    await DB.prepare("UPDATE email_subscriptions SET last_email_sent = datetime('now') WHERE id = ?")
-      .bind(sub.id)
-      .run();
+      // Bookkeeping only -- `last_email_sent` predates this sender and had never
+      // been written by anything. Not used for gating: the notifications table is
+      // the record, because one timestamp cannot say WHICH notice was received.
+      await DB.prepare("UPDATE email_subscriptions SET last_email_sent = datetime('now') WHERE id = ?")
+        .bind(sub.id)
+        .run();
+    } catch (confirmError) {
+      logger.error("subscriber delivery confirmation failed; email WAS sent, claim may be retried", {
+        subscriptionId: sub.id,
+        eventId,
+        kind,
+        error: confirmError?.message,
+      });
+    }
+    // Outside the try on purpose: it was sent.
     return "sent";
   };
 

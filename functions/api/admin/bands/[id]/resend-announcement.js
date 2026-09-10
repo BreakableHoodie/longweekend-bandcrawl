@@ -6,7 +6,7 @@ import { checkPermission, auditLog } from "../../_middleware.js";
 import { getClientIP } from "../../../../utils/request.js";
 import { isEmailConfigured } from "../../../../utils/email.js";
 import { validateId } from "../../../../utils/validation.js";
-import { notifyBandFollowers } from "../../../../utils/bandFollowNotify.js";
+import { claimIsLiveSql, notifyBandFollowers } from "../../../../utils/bandFollowNotify.js";
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -50,13 +50,23 @@ export async function onRequestPost(context) {
     return json({ error: "Bad request", message: "Performance has not been announced" }, 400);
   }
 
-  // Verified followers WITHOUT a notification row for this performance.
+  // Verified followers who still need this notice.
+  //
+  // NOT simply "has no ledger row" (#1152): a row can exist and mean nothing
+  // was delivered, if a Worker died between claiming and sending. Matching on
+  // row existence alone filtered those followers out of the very resend that
+  // exists to recover them.
+  //
+  // claimIsLiveSql is shared with the sender so the two cannot drift -- a
+  // resend that skips someone the sender would still mail is the same bug in
+  // different clothes.
   const { results: followers = [] } = await DB.prepare(
     `SELECT bf.id, bf.email, bf.unsubscribe_token
      FROM band_follows bf
      LEFT JOIN band_follow_notifications bfn
        ON bfn.band_follow_id = bf.id AND bfn.performance_id = ?
-     WHERE bf.band_profile_id = ? AND bf.verified = 1 AND bfn.id IS NULL`,
+     WHERE bf.band_profile_id = ? AND bf.verified = 1
+       AND (bfn.id IS NULL OR NOT ${claimIsLiveSql("bfn")})`,
   )
     .bind(performanceId, perf.band_profile_id)
     .all();

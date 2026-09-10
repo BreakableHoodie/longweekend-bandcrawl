@@ -69,4 +69,90 @@ describe("POST /api/admin/bands/[id]/resend-announcement", () => {
       .all(perf.id);
     expect(notified.map((r) => r.band_follow_id)).toEqual([f1, f2]);
   });
+  // The two cases #1152 exists for. They are a PAIR: the first alone is
+  // satisfied by making everything retryable, which would re-mail the entire
+  // history, so neither is meaningful without the other.
+  //
+  // Seeding claimed_at/delivered_at directly is the point -- a killed Worker
+  // is not reproducible from the handler, and the row it strands is exactly
+  // what these rows are.
+  test("retries a claim that was never delivered and is past its lease", async () => {
+    const { env, rawDb } = createTestEnv();
+    const event = insertEvent(rawDb, { name: "Fest", slug: "fest" });
+    const venue = insertVenue(rawDb, { name: "Hall" });
+    const perf = insertBand(rawDb, {
+      name: "The Band",
+      event_id: event.id,
+      venue_id: venue.id,
+    });
+
+    const stranded = rawDb
+      .prepare("INSERT INTO band_follows (email, band_profile_id, verified, unsubscribe_token) VALUES (?, ?, 1, ?)")
+      .run("stranded@x.co", perf.band_profile_id, "tok-stranded").lastInsertRowid;
+
+    // What a Worker that died between claiming and sending leaves behind:
+    // claimed, never delivered, lease long expired.
+    rawDb
+      .prepare(
+        `INSERT INTO band_follow_notifications (performance_id, band_follow_id, claimed_at, delivered_at)
+         VALUES (?, ?, datetime('now', '-60 minutes'), NULL)`,
+      )
+      .run(perf.id, stranded);
+
+    const res = await onRequestPost({
+      request: new Request(`https://example.test/api/admin/bands/${perf.id}/resend-announcement`, {
+        method: "POST",
+        headers: { "x-test-role": "editor" },
+      }),
+      params: { id: String(perf.id) },
+      env,
+      data: { user: { userId: 1, email: "admin@x.co", role: "editor" } },
+    });
+
+    expect(res.status).toBe(200);
+    // Before #1152 this was 0: the claim row alone filtered the fan out of
+    // every future run, so the send was dropped permanently and silently.
+    expect((await res.json()).sent).toBe(1);
+
+    const row = rawDb
+      .prepare("SELECT delivered_at FROM band_follow_notifications WHERE performance_id = ? AND band_follow_id = ?")
+      .get(perf.id, stranded);
+    expect(row.delivered_at).not.toBeNull();
+  });
+
+  test("never retries a delivered row, however old the claim", async () => {
+    const { env, rawDb } = createTestEnv();
+    const event = insertEvent(rawDb, { name: "Fest", slug: "fest" });
+    const venue = insertVenue(rawDb, { name: "Hall" });
+    const perf = insertBand(rawDb, {
+      name: "The Band",
+      event_id: event.id,
+      venue_id: venue.id,
+    });
+
+    const delivered = rawDb
+      .prepare("INSERT INTO band_follows (email, band_profile_id, verified, unsubscribe_token) VALUES (?, ?, 1, ?)")
+      .run("delivered@x.co", perf.band_profile_id, "tok-delivered").lastInsertRowid;
+
+    // A year past its lease, but DELIVERED. Age must not make it retryable.
+    rawDb
+      .prepare(
+        `INSERT INTO band_follow_notifications (performance_id, band_follow_id, claimed_at, delivered_at)
+         VALUES (?, ?, datetime('now', '-365 days'), datetime('now', '-365 days'))`,
+      )
+      .run(perf.id, delivered);
+
+    const res = await onRequestPost({
+      request: new Request(`https://example.test/api/admin/bands/${perf.id}/resend-announcement`, {
+        method: "POST",
+        headers: { "x-test-role": "editor" },
+      }),
+      params: { id: String(perf.id) },
+      env,
+      data: { user: { userId: 1, email: "admin@x.co", role: "editor" } },
+    });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).sent).toBe(0);
+  });
 });

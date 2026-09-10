@@ -87,6 +87,24 @@ export const REPO_ROOT = path.join(__dirname, "..");
 /** @type {Mutation[]} */
 export const MUTATIONS = [
   {
+    id: "band-follow-claim-lease",
+    invariant:
+      "CLAUDE.md 'A claim is not a delivery record (#1152)' — an UNDELIVERED claim past its lease is abandoned and must be retried",
+    file: "functions/utils/bandFollowNotify.js",
+    find: "AND claimed_at <= datetime('now', '-${CLAIM_LEASE_MINUTES} minutes')",
+    replace: "AND 1 = 0",
+    tests: ["functions/utils/__tests__/bandFollowNotify.test.js"],
+  },
+  {
+    id: "band-follow-delivered-never-retried",
+    invariant:
+      "CLAUDE.md 'A claim is not a delivery record (#1152)' — a DELIVERED row is never retried, however old the claim",
+    file: "functions/utils/bandFollowNotify.js",
+    find: "AND delivered_at IS NULL",
+    replace: "",
+    tests: ["functions/utils/__tests__/bandFollowNotify.test.js"],
+  },
+  {
     id: "announce-double-opt-in-primary",
     invariant:
       "CLAUDE.md 'Band Announcements' — announcement emails target verified = 1 followers only (primary announce query)",

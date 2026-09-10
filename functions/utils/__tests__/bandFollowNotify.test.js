@@ -12,6 +12,10 @@ import { createTestEnv, insertEvent, insertVenue, insertBand } from "../../api/t
 describe("notifyBandFollowers", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    // restoreAllMocks restores SPIES; it does not reset the call history of a
+    // vi.fn() from a module mock factory, so sendEmail's calls accumulated
+    // across tests. Any assertion on a call COUNT then measured the whole file.
+    vi.clearAllMocks();
   });
   test("records a notification for each delivered email and skips failures", async () => {
     const { env, rawDb } = createTestEnv();
@@ -160,5 +164,126 @@ describe("notifyBandFollowers", () => {
       .prepare("SELECT id FROM band_follow_notifications WHERE performance_id = ? AND band_follow_id = ?")
       .all(perf.id, fId);
     expect(rows).toHaveLength(0);
+  });
+  // Sender-level companions to the handler tests in
+  // api/admin/bands/__tests__/resend-announcement.test.js.
+  //
+  // They exist BECAUSE the handler tests cannot prove these lines. The read
+  // filter and the takeover's own delivered_at check are each independently
+  // sufficient to stop a re-send, so breaking either one alone leaves every
+  // handler test green -- verified by mutation, not assumed. Calling the
+  // sender directly puts exactly one guard in play, which is what makes these
+  // two able to fail.
+  //
+  // Both assert on sendEmail -- the side effect that actually reaches a
+  // person -- rather than only the returned counts.
+  test("takes over a claim that was never delivered and is past its lease", async () => {
+    const { env, rawDb } = createTestEnv();
+    const event = insertEvent(rawDb, { name: "Fest", slug: "fest" });
+    const venue = insertVenue(rawDb, { name: "Hall" });
+    const perf = insertBand(rawDb, { name: "The Band", event_id: event.id, venue_id: venue.id });
+
+    const followId = rawDb
+      .prepare("INSERT INTO band_follows (email, band_profile_id, verified, unsubscribe_token) VALUES (?, ?, 1, ?)")
+      .run("stranded@example.com", perf.band_profile_id, "tok-s").lastInsertRowid;
+
+    // Exactly what a Worker killed between claiming and sending leaves behind.
+    rawDb
+      .prepare(
+        `INSERT INTO band_follow_notifications (performance_id, band_follow_id, claimed_at, delivered_at)
+         VALUES (?, ?, datetime('now', '-60 minutes'), NULL)`,
+      )
+      .run(perf.id, followId);
+
+    sendEmail.mockResolvedValue({ delivered: true });
+
+    const result = await notifyBandFollowers(env, env.DB, {
+      performanceId: perf.id,
+      bandProfileId: perf.band_profile_id,
+      bandName: "The Band",
+      eventName: "Fest",
+      followers: [{ id: followId, email: "stranded@example.com", unsubscribe_token: "tok-s" }],
+    });
+
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect(result.sent).toBe(1);
+
+    const row = rawDb
+      .prepare("SELECT delivered_at FROM band_follow_notifications WHERE performance_id = ? AND band_follow_id = ?")
+      .get(perf.id, followId);
+    expect(row.delivered_at).not.toBeNull();
+  });
+
+  test("never takes over a delivered row, however old the claim", async () => {
+    const { env, rawDb } = createTestEnv();
+    const event = insertEvent(rawDb, { name: "Fest", slug: "fest" });
+    const venue = insertVenue(rawDb, { name: "Hall" });
+    const perf = insertBand(rawDb, { name: "The Band", event_id: event.id, venue_id: venue.id });
+
+    const followId = rawDb
+      .prepare("INSERT INTO band_follows (email, band_profile_id, verified, unsubscribe_token) VALUES (?, ?, 1, ?)")
+      .run("done@example.com", perf.band_profile_id, "tok-d").lastInsertRowid;
+
+    // A year past its lease -- but delivered. Age must not make it retryable,
+    // or the first resend after the lease re-mails the whole history.
+    rawDb
+      .prepare(
+        `INSERT INTO band_follow_notifications (performance_id, band_follow_id, claimed_at, delivered_at)
+         VALUES (?, ?, datetime('now', '-365 days'), datetime('now', '-365 days'))`,
+      )
+      .run(perf.id, followId);
+
+    sendEmail.mockResolvedValue({ delivered: true });
+
+    const result = await notifyBandFollowers(env, env.DB, {
+      performanceId: perf.id,
+      bandProfileId: perf.band_profile_id,
+      bandName: "The Band",
+      eventName: "Fest",
+      followers: [{ id: followId, email: "done@example.com", unsubscribe_token: "tok-d" }],
+    });
+
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(result.sent).toBe(0);
+  });
+  // Failure-path code, so it is tested by BREAKING the thing it guards. The
+  // happy path never runs this catch, so a green suite says nothing about it.
+  test("counts a send as sent when the delivery-confirmation write fails", async () => {
+    const { env, rawDb } = createTestEnv();
+    const event = insertEvent(rawDb, { name: "Fest", slug: "fest" });
+    const venue = insertVenue(rawDb, { name: "Hall" });
+    const perf = insertBand(rawDb, { name: "The Band", event_id: event.id, venue_id: venue.id });
+
+    const followId = rawDb
+      .prepare("INSERT INTO band_follows (email, band_profile_id, verified, unsubscribe_token) VALUES (?, ?, 1, ?)")
+      .run("confirm-fails@example.com", perf.band_profile_id, "tok-c").lastInsertRowid;
+
+    sendEmail.mockResolvedValue({ delivered: true });
+    const errorSpy = vi.spyOn(loggerModule.logger, "error").mockImplementation(() => {});
+
+    // Break ONLY the confirmation write; the claim must still work, or the
+    // test would prove nothing about this branch.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = (sql) => {
+      if (sql.includes("SET delivered_at")) {
+        throw new Error("D1 write failed");
+      }
+      return realPrepare(sql);
+    };
+
+    const result = await notifyBandFollowers(env, env.DB, {
+      performanceId: perf.id,
+      bandProfileId: perf.band_profile_id,
+      bandName: "The Band",
+      eventName: "Fest",
+      followers: [{ id: followId, email: "confirm-fails@example.com", unsubscribe_token: "tok-c" }],
+    });
+
+    // The email went out. Reporting it failed would invite the resend that is
+    // the one action turning a lost write into a duplicate (#1153).
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect(result.sent).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(errorSpy).toHaveBeenCalled();
   });
 });

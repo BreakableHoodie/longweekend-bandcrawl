@@ -734,6 +734,82 @@ describe blocks.
 
 The human-facing version of this, plus what to do when a set time changes or something looks wrong mid-event, is `docs/SHOW_DAY_RUNBOOK.md`. Keep the two in step — if a procedure changes, change both in the same commit.
 
+### A claim is not a delivery record (#1152)
+
+`band_follow_notifications` used **one** row to mean two things: *"I am sending
+to this person"* and *"this person has been sent to."* A Worker that died
+between the two -- and the gap is a live network round-trip wide -- left a row
+that every later reader, **resends included**, read as "already notified." The
+follower was dropped permanently and silently. Silence is the worst shape a mail
+bug can take: nothing errors, nothing retries, and the fan simply never hears.
+
+Migration 0065 splits the row into `claimed_at` (NOT NULL, defaults to now) and
+`delivered_at` (nullable, set **only** on provider confirmation). It drops
+`notified_at`, which could only ever have restated one of the two.
+
+**The two rules are a PAIR, and the second is not optional:**
+
+1. An **undelivered** claim past its lease is abandoned, and must be retried.
+2. A **delivered** row is never retried, however old.
+
+Rule 1 alone is satisfied by making *everything* retryable -- which would
+re-mail the entire history on the first resend. That is why every test here
+comes in twos.
+
+`CLAIM_LEASE_MINUTES` (15) and `claimIsLiveSql(alias)` live in
+`functions/utils/bandFollowNotify.js` and are the single home for "does this row
+still speak for the follower?". The sender and **every reader** must agree
+exactly; when they drift, one side is silently wrong about who has been mailed,
+and the symptom is a dropped fan or a duplicate. Current readers:
+`api/admin/bands/[id]/resend-announcement.js` (recipient filter) and
+`api/admin/events/[id]/metrics.js` (`would_notify_count`). A third reader
+imports the helper -- it does not hand-write the predicate.
+
+**Marking `delivered_at` on success is mandatory, not bookkeeping.** Once an
+undelivered claim past its lease is retryable, a successful send left unmarked
+is indistinguishable from a crashed one and gets re-mailed fifteen minutes
+later -- strictly worse than the bug this fixes. `announceDigest.js` is the easy
+one to miss: it claims conditionally (on `is_cancelled`, a *different* concern)
+and had no delivery marking at all.
+
+**Why the guard tests live at the SENDER, not the handler.** The read filter and
+the takeover's own `delivered_at IS NULL` check are each *independently*
+sufficient to stop a re-send. So breaking either one alone leaves every
+handler-level test green -- verified by mutation, not assumed: the first draft
+of "never retries a delivered row" was written against the endpoint and survived
+both mutations, proving nothing. Calling `notifyBandFollowers` directly puts
+exactly one guard in play, which is what lets the test fail. Defence in depth and
+mutation-testability pull against each other here; prove each guard at the layer
+where it stands alone, and keep the endpoint test as documentation of the
+combined guarantee rather than evidence for it.
+
+Both sender-level tests are in the mutation gate.
+
+**A confirmation write must never be able to fail a delivered send.** Sending
+and recording are two phases with no atomicity between them. If the
+confirmation write throws and the throw ESCAPES, the caller's
+`Promise.allSettled` tally counts a **delivered** email as failed -- which
+invites the resend that turns a lost write into a duplicate. So each of these
+is caught locally, logged, and still counted as sent, because it was.
+
+There were **three** such sites at once, and the count is the lesson:
+`bandFollowNotify.js`, `announceDigest.js` and `subscriberNotify.js`. Only the
+first was written guarded; the second was named by review, and the third --
+shipped in #1149 -- was found only by sweeping the class afterwards. Nothing
+about an unguarded `await` at one of those call sites looks wrong locally.
+
+`functions/utils/__tests__/deliveryConfirmationGuard.test.js` retires the class:
+it discovers every non-test `SET delivered_at` write, asserts each is enclosed
+by a `try` (by brace depth, so a try block that *ended* earlier in the same
+function does not count), asserts it still finds at least three, and asserts its
+own detector can return **false** -- otherwise every case passes vacuously.
+
+The remaining window is the provider's: a send confirmed by the provider whose
+local record is lost stays retryable. **#1153** tracks the real fix, a
+provider-side idempotency key, which has to be keyed per *task* in
+`announceDigest.js` (one email covers several claimed rows) and per
+`(performance, follower)` in `bandFollowNotify.js`.
+
 ## Band Announcements
 
 Band follows are **double opt-in**: `POST /api/bands/:name/follow` creates the row `verified = 0` with a `verification_token` and sends only a confirmation email. Clicking the link hits `GET /api/bands/:name/confirm-follow?token=…`, which sets `verified = 1` and clears the token (idempotent). Announcement emails target `verified = 1` followers **only** (the `WHERE … verified = 1` filter in `admin/bands/[id].js` and `resend-announcement.js`), so an address the submitter doesn't control can never be enrolled in the announcement stream — it receives at most one confirmation email. **Do not revert follow to auto-verify (`verified = 1` on insert)** — it reopens the email-bombing vector.
@@ -1369,10 +1445,17 @@ two values:
 > available. Your included PR review attempts over the past 7 days set your
 > current allowance at **4 reviews per hour**. **Plan**: Essentials
 
-So it **recovers** as 7-day usage falls; it does not only shrink. That is the
-durable fact, and it is why no number written here stays true — including these
-two. `.githooks/pre-push` tracks the most recent observed footer (`LIMIT=4` as
-of 2026-09-09) and records both observations in its own comments, so a stale
+<!-- a third quote, one day later -->
+
+> 2026-09-10, #1154 — **Included review availability:** 0 reviews are currently
+> available. Your included PR review attempts over the past 7 days set your
+> current allowance at **3 reviews per hour**. **Plan**: Essentials
+
+Three readings, three different numbers — 1, then 4, then 3. It **recovers** as
+7-day usage falls and **falls** as usage rises, so it moves in both directions.
+That is the durable fact, and it is why no number written here stays true —
+including these three. `.githooks/pre-push` tracks the most recent observed
+footer (`LIMIT=3` as of 2026-09-10) and records both observations in its own comments, so a stale
 value is visible as a stale date rather than as a bare constant. Move it only
 against a CURRENT footer.
 

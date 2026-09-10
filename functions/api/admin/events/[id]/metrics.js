@@ -1,6 +1,7 @@
 import { checkPermission } from "../../_middleware.js";
 import { validateId } from "../../../../utils/validation.js";
 import { sortableName } from "../../../../utils/sortableName.js";
+import { claimIsLiveSql } from "../../../../utils/bandFollowNotify.js";
 
 export async function onRequestGet(context) {
   const { env, params } = context;
@@ -105,9 +106,14 @@ export async function onRequestGet(context) {
                 AND bf.created_at >= datetime('now', '-7 days')) AS recent_growth,
            (SELECT COUNT(*) FROM band_follows bf
               WHERE bf.band_profile_id = bp.id AND bf.verified = 1
+                -- Must match what a resend would ACTUALLY do (#1152). A ledger row
+                -- can exist and mean nothing was delivered, so counting on row
+                -- existence alone under-reports -- it hides exactly the followers
+                -- a resend is there to recover.
                 AND NOT EXISTS (
                   SELECT 1 FROM band_follow_notifications bfn
                   WHERE bfn.performance_id = p.id AND bfn.band_follow_id = bf.id
+                    AND ${claimIsLiveSql("bfn")}
                 )) AS would_notify_count
          FROM performances p
          JOIN band_profiles bp ON p.band_profile_id = bp.id
