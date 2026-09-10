@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, memo } from 'react'
+import ConfirmDialog from '../components/ui/ConfirmDialog'
 import { eventsApi, bandsApi } from '../utils/adminApi'
 import { useEventContext } from '../contexts/EventContext'
 import EventFormModal from './components/EventFormModal'
@@ -658,12 +659,19 @@ export default function EventsTab({
     }
   }
 
+  const [notifyConfirm, setNotifyConfirm] = useState({ open: false, message: '', onConfirm: () => {} })
+
   // Mail the general subscriber list about this event (#1150).
   //
-  // window.confirm rather than a modal, matching every other irreversible
-  // action in this file. The confirm NAMES the notice, because the kind is
-  // derived rather than chosen and an operator should see which one is going
-  // out before it does.
+  // ConfirmDialog, not window.confirm. The rest of this file still uses
+  // window.confirm, but the shared component is the repo's real one (App.jsx,
+  // AdminPanel, AdminApp, LineupTab) and it is the accessible one -- focus
+  // trap, ESC, a real dialog role, theme-aware danger styling. Adding the
+  // better pattern here rather than propagating the older one; migrating this
+  // file's other three confirms is its own change.
+  //
+  // The confirm NAMES the notice, because the kind is derived rather than
+  // chosen and an operator should see which one is going out before it does.
   //
   // Email is the one side effect with no undo, which is why this is manual and
   // why the wording is blunt. It is safe to repeat, though: the server tracks
@@ -677,14 +685,16 @@ export default function EventsTab({
     }
     const kind = notifyKindFor(event)
     const notice = kind === 'schedule_announced' ? 'Set times are up' : 'The lineup is live'
-    if (
-      !window.confirm(
-        `Email every verified subscriber about "${event.name}"?\n\nNotice: ${notice}\n\nThis cannot be undone.`
-      )
-    ) {
-      return
-    }
+    setNotifyConfirm({
+      open: true,
+      message: `Email every verified subscriber about "${event.name}"?\n\nNotice: ${notice}\n\nThis cannot be undone.`,
+      onConfirm: () => sendSubscriberNotice(event, kind),
+    })
+  }
 
+  // Split from the confirm so the dialog owns the decision and this owns the
+  // send -- the same shape LineupTab uses.
+  const sendSubscriberNotice = async (event, kind) => {
     try {
       const res = await eventsApi.notifySubscribers(event.id, kind)
       const sent = res.sent ?? 0
@@ -1358,6 +1368,18 @@ export default function EventsTab({
           </div>
         </div>
       )}
+      <ConfirmDialog
+        isOpen={notifyConfirm.open}
+        title="Notify subscribers"
+        message={notifyConfirm.message}
+        confirmText="Send"
+        variant="danger"
+        onConfirm={async () => {
+          setNotifyConfirm(d => ({ ...d, open: false }))
+          await notifyConfirm.onConfirm()
+        }}
+        onCancel={() => setNotifyConfirm(d => ({ ...d, open: false }))}
+      />
     </div>
   )
 }

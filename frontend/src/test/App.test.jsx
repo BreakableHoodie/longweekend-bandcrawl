@@ -585,4 +585,21 @@ describe('still-to-come teaser', () => {
 
     expect(await screen.findByText(/More bands dropping soon\./)).toBeInTheDocument()
   })
+  it('still teases a staged reveal that has revealed NOTHING yet', async () => {
+    // Deliberate, and the behaviour predates this PR: the old condition was
+    // `!isArchived && reveal_mode === 1` with no lineup check at all.
+    //
+    // Suppressing the teaser here would remove it from the event that needs it
+    // most -- a staged reveal with nothing revealed is the whole premise of a
+    // staged reveal, and "more bands dropping soon" is exactly true.
+    //
+    // Note this differs from the SET TIMES branch, which does require a
+    // non-empty lineup: promising set times before there are any sets gets
+    // ahead of itself, while promising bands before there are any is the point.
+    mockScheduleFetch({ bands: [], event: { ...mockEvent, reveal_mode: 1 } })
+    renderApp()
+
+    expect(await screen.findByText(/More bands dropping soon\./)).toBeInTheDocument()
+    expect(screen.queryByText(/Set times coming soon\./)).not.toBeInTheDocument()
+  })
 })

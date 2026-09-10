@@ -293,6 +293,13 @@ describe('EventsTab — notify subscribers', () => {
     return showToast
   }
 
+  // Opens the ConfirmDialog. The dialog is a real component, not window.confirm,
+  // so the tests drive its actual buttons -- which is also what makes the
+  // "declined" case meaningful rather than a mocked return value.
+  const clickNotify = () => fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
+  const confirmSend = () => fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+  const cancelSend = () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
   beforeEach(() => {
     eventsApi.notifySubscribers.mockReset()
     eventsApi.notifySubscribers.mockResolvedValue({ success: true, sent: 3, failed: 0, skipped: 0, remaining: 0 })
@@ -303,10 +310,9 @@ describe('EventsTab — notify subscribers', () => {
   })
 
   it('sends the LINEUP notice while no set has a time', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderTab([LINEUP_UP_SCHEDULE_TBA])
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
+    clickNotify()
+    confirmSend()
 
     await waitFor(() => expect(eventsApi.notifySubscribers).toHaveBeenCalledWith(37, 'lineup_announced'))
   })
@@ -314,31 +320,28 @@ describe('EventsTab — notify subscribers', () => {
   it('sends the SCHEDULE notice once any set has a time', async () => {
     // The kind is derived, so this is the assertion that the derivation is
     // live rather than hardcoded to one value.
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderTab([SCHEDULE_OUT])
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
+    clickNotify()
+    confirmSend()
 
     await waitFor(() => expect(eventsApi.notifySubscribers).toHaveBeenCalledWith(37, 'schedule_announced'))
   })
 
-  it('names the notice in the confirm before anything is sent', () => {
+  it('names the notice in the dialog before anything is sent', () => {
     // The operator does not choose the kind, so they must be able to SEE it.
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderTab([LINEUP_UP_SCHEDULE_TBA])
+    clickNotify()
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
-
-    expect(confirmSpy.mock.calls[0][0]).toContain('The lineup is live')
-    expect(confirmSpy.mock.calls[0][0]).toContain('cannot be undone')
+    expect(screen.getByRole('dialog')).toHaveTextContent('The lineup is live')
+    expect(screen.getByRole('dialog')).toHaveTextContent('cannot be undone')
+    expect(eventsApi.notifySubscribers).not.toHaveBeenCalled()
   })
 
-  it('sends nothing when the confirm is declined', () => {
+  it('sends nothing when the dialog is cancelled', () => {
     // Email has no undo, so the cancel path is the one that must not be vacuous.
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
     renderTab([LINEUP_UP_SCHEDULE_TBA])
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
+    clickNotify()
+    cancelSend()
 
     expect(eventsApi.notifySubscribers).not.toHaveBeenCalled()
   })
@@ -347,13 +350,26 @@ describe('EventsTab — notify subscribers', () => {
     // `remaining` is not an error -- the send is capped per invocation. A fan
     // left in that bucket hears nothing until someone presses again, so hiding
     // it would strand them silently.
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     eventsApi.notifySubscribers.mockResolvedValue({ success: true, sent: 200, failed: 0, skipped: 0, remaining: 47 })
     const showToast = renderTab([LINEUP_UP_SCHEDULE_TBA])
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
+    clickNotify()
+    confirmSend()
 
     await waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.stringContaining('47 still to go'), 'success'))
+  })
+
+  it('reports a total delivery failure as an error, not as "already notified"', async () => {
+    // sent 0 / remaining 0 / failed > 0 matches the "already notified" shape on
+    // its first two fields. Without the failed check it renders in GREEN and
+    // the operator never learns nobody was mailed -- a silent failure in the
+    // one place there is no undo.
+    eventsApi.notifySubscribers.mockResolvedValue({ success: true, sent: 0, failed: 5, skipped: 0, remaining: 0 })
+    const showToast = renderTab([LINEUP_UP_SCHEDULE_TBA])
+    clickNotify()
+    confirmSend()
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.stringContaining('5 failed'), 'error'))
+    expect(showToast).not.toHaveBeenCalledWith(expect.stringContaining('already been notified'), 'success')
   })
 
   it('offers no button on a draft event', () => {
@@ -368,19 +384,5 @@ describe('EventsTab — notify subscribers', () => {
     renderTab([{ ...LINEUP_UP_SCHEDULE_TBA, band_count: 0 }])
 
     expect(screen.queryAllByRole('button', { name: 'Notify' })).toHaveLength(0)
-  })
-  it('reports a total delivery failure as an error, not as "already notified"', async () => {
-    // sent 0 / remaining 0 / failed > 0 matches the "already notified" shape on
-    // its first two fields. Without the failed check it renders in GREEN and
-    // the operator never learns nobody was mailed -- a silent failure in the
-    // one place there is no undo.
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-    eventsApi.notifySubscribers.mockResolvedValue({ success: true, sent: 0, failed: 5, skipped: 0, remaining: 0 })
-    const showToast = renderTab([LINEUP_UP_SCHEDULE_TBA])
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Notify' })[0])
-
-    await waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.stringContaining('5 failed'), 'error'))
-    expect(showToast).not.toHaveBeenCalledWith(expect.stringContaining('already been notified'), 'success')
   })
 })
