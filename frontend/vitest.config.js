@@ -15,7 +15,7 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.js'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      reporter: ['text', 'json', 'html', 'json-summary'],
       exclude: ['node_modules/', 'src/test/', '*.config.js', 'dist/'],
       // Ratchet re-measured 2026-08-30 (stmts 71.21 / branch 65.80 /
       // funcs 72.85 / lines 71.81), after App.jsx gained a real suite and went
@@ -32,11 +32,13 @@ export default defineConfig({
       // loads, so a new test that imports a large untested component can drop
       // the global percentage while strictly adding coverage. Prefer extracting
       // and testing a small unit over importing a 1,000-line tab component.
+      // Raised 2026-09-09 from 66/60/68/66 by scripts/check-coverage-drift.mjs,
+      // which now FAILS when actual outruns these by more than 3 points.
       thresholds: {
-        statements: 66,
-        branches: 60,
-        functions: 68,
-        lines: 66,
+        statements: 70,
+        branches: 65,
+        functions: 72,
+        lines: 71,
       },
     },
   },
