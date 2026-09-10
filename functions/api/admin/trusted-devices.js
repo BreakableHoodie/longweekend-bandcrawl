@@ -3,6 +3,8 @@
 // DELETE /api/admin/trusted-devices — revoke a specific device by ID (body: { deviceId })
 
 import { parseJsonObjectBodyStrict } from "../../utils/request.js";
+import { auditLog } from "./_middleware.js";
+import { getClientIP } from "../../utils/request.js";
 
 export async function onRequestGet(context) {
   const { env, data } = context;
@@ -78,6 +80,18 @@ export async function onRequestDelete(context) {
     await env.DB.prepare("DELETE FROM trusted_devices WHERE id = ? AND user_id = ?")
       .bind(Number(deviceId), user.userId)
       .run();
+
+    // A trusted device skips MFA, so removing one changes the account's
+    // security posture -- exactly the kind of change the log exists for (#1143).
+    await auditLog(
+      env,
+      user.userId,
+      "trusted_device.revoked",
+      "trusted_device",
+      Number(deviceId),
+      {},
+      getClientIP(request),
+    );
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { "Content-Type": "application/json" },

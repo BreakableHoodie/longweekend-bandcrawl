@@ -18,7 +18,8 @@
  * /api/admin/events/{id} endpoint (#504 convention).
  */
 
-import { checkPermission } from "../_middleware.js";
+import { checkPermission, auditLog } from "../_middleware.js";
+import { getClientIP } from "../../../utils/request.js";
 import { detectImageMimeType, MAX_FILE_SIZE, ALLOWED_IMAGE_TYPES } from "../../../utils/imageUpload.js";
 import { normalizeHttpUrl, validateId } from "../../../utils/validation.js";
 
@@ -116,6 +117,19 @@ export async function onRequestPost(context) {
       await env.DB.prepare("UPDATE events SET poster_url = ? WHERE id = ?")
         .bind(normalizeHttpUrl(publicUrl), eventId)
         .run();
+
+      // Inside the eventId branch on purpose (#1143): an upload with no event_id
+      // writes to R2 and no database row, so there is no resource to attribute
+      // the change to.
+      await auditLog(
+        env,
+        user.userId,
+        "event.poster_updated",
+        "event",
+        eventId,
+        { url: publicUrl },
+        getClientIP(request),
+      );
     }
 
     return new Response(

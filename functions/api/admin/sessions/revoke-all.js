@@ -2,7 +2,8 @@
 // POST /api/admin/sessions/revoke-all
 
 import { generateCSRFToken, setCSRFCookie } from "../../../utils/csrf.js";
-import { checkPermission } from "../_middleware.js";
+import { checkPermission, auditLog } from "../_middleware.js";
+import { getClientIP } from "../../../utils/request.js";
 
 export async function onRequestPost(context) {
   const { env, data, request } = context;
@@ -25,6 +26,11 @@ export async function onRequestPost(context) {
   const { lucia, user } = data;
 
   await lucia.invalidateUserSessions(user.userId);
+
+  // Logged BEFORE the replacement session is minted, so the row attributes the
+  // revocation to the session that asked for it rather than to the one created
+  // a line later (#1143).
+  await auditLog(env, user.userId, "session.revoked_all", "session", null, {}, getClientIP(request));
 
   const newSession = await lucia.createSession(user.userId, {});
 

@@ -6,7 +6,8 @@
  * Supports image validation, optimization, and secure file storage.
  */
 
-import { checkPermission } from "../_middleware.js";
+import { checkPermission, auditLog } from "../_middleware.js";
+import { getClientIP } from "../../../utils/request.js";
 import { detectImageMimeType, MAX_FILE_SIZE, ALLOWED_IMAGE_TYPES } from "../../../utils/imageUpload.js";
 
 export async function onRequestPost(context) {
@@ -150,6 +151,22 @@ export async function onRequestPost(context) {
       }
     }
 
+    // A photo is content, so a change to it belongs in the log (#1143). Only
+    // logged when it was actually attached to a profile -- an upload with no
+    // bandProfileId writes to R2 and no database row, so there is no resource
+    // to attribute it to.
+    if (bandProfileId) {
+      await auditLog(
+        env,
+        user.userId,
+        "band.photo_updated",
+        "band",
+        bandProfileId,
+        { url: publicUrl },
+        getClientIP(request),
+      );
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -189,6 +206,7 @@ export async function onRequestDelete(context) {
     if (permCheck.error) {
       return permCheck.response;
     }
+    const { user } = permCheck;
 
     // Extract filename from URL path
     const url = new URL(request.url);
@@ -211,6 +229,11 @@ export async function onRequestDelete(context) {
 
     // Delete from R2 bucket
     await env.BAND_PHOTOS.delete(objectKey);
+
+    // Destroying a photo is a change, and unlike the upload path there is no
+    // band_profile row to point at -- this route takes an object key, not a
+    // profile id. Logged against the key so the deletion is still attributable.
+    await auditLog(env, user.userId, "band.photo_deleted", "band_photo", null, { objectKey }, getClientIP(request));
 
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
