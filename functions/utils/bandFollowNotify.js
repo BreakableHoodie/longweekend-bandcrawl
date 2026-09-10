@@ -83,11 +83,33 @@ export async function notifyBandFollowers(env, DB, { performanceId, bandProfileI
         // Promote the claim to a DELIVERY. Mandatory, not bookkeeping: an
         // undelivered claim past its lease is now retryable, so a successful
         // send left unmarked would be re-mailed CLAIM_LEASE_MINUTES later.
-        await DB.prepare(
-          "UPDATE band_follow_notifications SET delivered_at = datetime('now') WHERE performance_id = ? AND band_follow_id = ?",
-        )
-          .bind(performanceId, follower.id)
-          .run();
+        //
+        // The send already happened and cannot be recalled, so a failure HERE
+        // is the one window this design trades for: the row stays undelivered,
+        // its lease expires, and a later resend mails the person a second time.
+        // That is deliberate. The alternative it replaces was a permanent,
+        // silent DROP -- and a visible duplicate is recoverable where silence
+        // is not. Closing the window properly needs a provider-side
+        // idempotency key on sendEmail (#1153), which is a change to every
+        // caller, not to this one.
+        //
+        // Counting it as SENT is the point of the catch: it was sent. Reporting
+        // it failed would invite an operator to resend, which is the single
+        // action that converts this into the duplicate.
+        try {
+          await DB.prepare(
+            "UPDATE band_follow_notifications SET delivered_at = datetime('now') WHERE performance_id = ? AND band_follow_id = ?",
+          )
+            .bind(performanceId, follower.id)
+            .run();
+        } catch (confirmError) {
+          logger.error("band follow delivery confirmation failed; email WAS sent, claim may be retried", {
+            performanceId,
+            bandFollowId: follower.id,
+            leaseMinutes: CLAIM_LEASE_MINUTES,
+            error: confirmError?.message,
+          });
+        }
       } else {
         // Email failed -- release the claim so a resend can retry immediately
         // rather than waiting out the lease. If this DELETE itself fails the

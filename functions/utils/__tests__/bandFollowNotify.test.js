@@ -246,4 +246,44 @@ describe("notifyBandFollowers", () => {
     expect(sendEmail).not.toHaveBeenCalled();
     expect(result.sent).toBe(0);
   });
+  // Failure-path code, so it is tested by BREAKING the thing it guards. The
+  // happy path never runs this catch, so a green suite says nothing about it.
+  test("counts a send as sent when the delivery-confirmation write fails", async () => {
+    const { env, rawDb } = createTestEnv();
+    const event = insertEvent(rawDb, { name: "Fest", slug: "fest" });
+    const venue = insertVenue(rawDb, { name: "Hall" });
+    const perf = insertBand(rawDb, { name: "The Band", event_id: event.id, venue_id: venue.id });
+
+    const followId = rawDb
+      .prepare("INSERT INTO band_follows (email, band_profile_id, verified, unsubscribe_token) VALUES (?, ?, 1, ?)")
+      .run("confirm-fails@example.com", perf.band_profile_id, "tok-c").lastInsertRowid;
+
+    sendEmail.mockResolvedValue({ delivered: true });
+    const errorSpy = vi.spyOn(loggerModule.logger, "error").mockImplementation(() => {});
+
+    // Break ONLY the confirmation write; the claim must still work, or the
+    // test would prove nothing about this branch.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = (sql) => {
+      if (sql.includes("SET delivered_at")) {
+        throw new Error("D1 write failed");
+      }
+      return realPrepare(sql);
+    };
+
+    const result = await notifyBandFollowers(env, env.DB, {
+      performanceId: perf.id,
+      bandProfileId: perf.band_profile_id,
+      bandName: "The Band",
+      eventName: "Fest",
+      followers: [{ id: followId, email: "confirm-fails@example.com", unsubscribe_token: "tok-c" }],
+    });
+
+    // The email went out. Reporting it failed would invite the resend that is
+    // the one action turning a lost write into a duplicate (#1153).
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect(result.sent).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(errorSpy).toHaveBeenCalled();
+  });
 });

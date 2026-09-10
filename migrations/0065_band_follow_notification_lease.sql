@@ -37,6 +37,24 @@ CREATE TABLE band_follow_notifications_new (
   UNIQUE (performance_id, band_follow_id)
 );
 
+-- Backfill: every surviving row is treated as DELIVERED.
+--
+-- This is the safe direction, and the opposite one is a live hazard. Under the
+-- old code a row was deleted when a send failed, so a row that still exists is
+-- almost certainly a real delivery. Marking these rows unconfirmed instead
+-- would make the ENTIRE history retryable the moment its lease expired, and the
+-- next resend would re-mail all of it -- the exact catastrophe the
+-- "a delivered row is never retried" rule exists to prevent. A permanent claim
+-- costs at most one missed retry for a row that predates the fix; the
+-- alternative costs everyone an inbox.
+--
+-- Note `notified_at` recorded the CLAIM, not a provider confirmation, so this
+-- is an inference rather than a reconciliation. Reconciling against provider
+-- delivery records would be the rigorous version and is not possible here:
+-- Resend/Postmark retention does not reach back over this table's lifetime, and
+-- there is nothing to reconcile anyway -- verified against production D1 on
+-- 2026-09-10, band_follow_notifications holds 0 rows, so this backfill moves
+-- nothing. It is written to be correct if some other environment has rows.
 INSERT INTO band_follow_notifications_new (id, performance_id, band_follow_id, claimed_at, delivered_at)
 SELECT id, performance_id, band_follow_id, notified_at, notified_at
 FROM band_follow_notifications;
