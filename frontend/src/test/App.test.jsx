@@ -499,3 +499,107 @@ describe('error states', () => {
     expect(screen.queryByRole('heading', { name: 'Oops! Something went wrong' })).not.toBeInTheDocument()
   })
 })
+
+// The "something is still to come" teaser (#1150).
+//
+// TWO states share one banner, and the negative cases are the point: a
+// predicate that is too wide would tell a fan the set times are coming while
+// the page is already showing them. So every state gets a case, not just the
+// new one.
+describe('still-to-come teaser', () => {
+  const noTimeAlpha = { ...bandAlpha, startTime: null, endTime: null }
+  const noTimeBeta = { ...bandBeta, startTime: null, endTime: null }
+
+  it('offers "set times coming soon" for an announced lineup with no start times', async () => {
+    // Vol 18's exact shape: reveal_mode 0, every set announced, not one placed.
+    mockScheduleFetch({ bands: [noTimeAlpha, noTimeBeta], event: { ...mockEvent, reveal_mode: 0 } })
+    renderApp()
+
+    expect(await screen.findByText(/Set times coming soon\./)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Subscribe for updates/ })).toHaveAttribute('href', '/subscribe')
+  })
+
+  it('still says "more bands dropping soon" on a staged reveal', async () => {
+    // reveal_mode wins even with no times set: more BANDS is the bigger news,
+    // and the two messages must never both render.
+    mockScheduleFetch({ bands: [noTimeAlpha], event: { ...mockEvent, reveal_mode: 1 } })
+    renderApp()
+
+    expect(await screen.findByText(/More bands dropping soon\./)).toBeInTheDocument()
+    expect(screen.queryByText(/Set times coming soon\./)).not.toBeInTheDocument()
+  })
+
+  it('shows no teaser once the schedule is out', async () => {
+    // The regression this guards: promising set times that are already on screen.
+    mockScheduleFetch({ bands: [bandAlpha, bandBeta], event: { ...mockEvent, reveal_mode: 0 } })
+    renderApp()
+    await findAlphaToggle()
+
+    expect(screen.queryByText(/Set times coming soon\./)).not.toBeInTheDocument()
+    expect(screen.queryByText(/More bands dropping soon\./)).not.toBeInTheDocument()
+  })
+
+  it('shows no teaser on an archived event', async () => {
+    // Nothing is still to come for an event that already happened.
+    mockScheduleFetch({
+      bands: [noTimeAlpha],
+      event: { ...mockEvent, reveal_mode: 0, is_archived: true },
+    })
+    renderApp()
+    await screen.findByText(/Alpha Wolves/)
+
+    expect(screen.queryByText(/Set times coming soon\./)).not.toBeInTheDocument()
+  })
+
+  it('shows no teaser when the lineup itself is empty', async () => {
+    // "Lineup TBA" is a third state. Promising SET TIMES before there are any
+    // sets gets ahead of itself -- and an empty `bands` is also what the page
+    // looks like mid-fetch, so this doubles as the no-flash case.
+    mockScheduleFetch({ bands: [], event: { ...mockEvent, reveal_mode: 0 } })
+    renderApp()
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled())
+
+    expect(screen.queryByText(/Set times coming soon\./)).not.toBeInTheDocument()
+  })
+  it('shows no teaser once even ONE set has a time', async () => {
+    // The boundary the every() expresses: a PARTIAL schedule is a schedule that
+    // has started landing. "Set times coming soon" alongside visible set times
+    // would contradict the page it sits on.
+    mockScheduleFetch({
+      bands: [bandAlpha, noTimeBeta],
+      event: { ...mockEvent, reveal_mode: 0 },
+    })
+    renderApp()
+    await findAlphaToggle()
+
+    expect(screen.queryByText(/Set times coming soon\./)).not.toBeInTheDocument()
+  })
+
+  it('reads the PUBLIC lineup, so a hidden set cannot suppress the teaser', async () => {
+    // On a staged reveal the API omits unannounced sets, so a timed-but-hidden
+    // performance never reaches `bands`. The teaser must therefore key off what
+    // the fan can actually see -- which is also why reveal_mode is checked
+    // first and this event says "more bands" rather than "set times".
+    mockScheduleFetch({ bands: [noTimeAlpha], event: { ...mockEvent, reveal_mode: 1 } })
+    renderApp()
+
+    expect(await screen.findByText(/More bands dropping soon\./)).toBeInTheDocument()
+  })
+  it('still teases a staged reveal that has revealed NOTHING yet', async () => {
+    // Deliberate, and the behaviour predates this PR: the old condition was
+    // `!isArchived && reveal_mode === 1` with no lineup check at all.
+    //
+    // Suppressing the teaser here would remove it from the event that needs it
+    // most -- a staged reveal with nothing revealed is the whole premise of a
+    // staged reveal, and "more bands dropping soon" is exactly true.
+    //
+    // Note this differs from the SET TIMES branch, which does require a
+    // non-empty lineup: promising set times before there are any sets gets
+    // ahead of itself, while promising bands before there are any is the point.
+    mockScheduleFetch({ bands: [], event: { ...mockEvent, reveal_mode: 1 } })
+    renderApp()
+
+    expect(await screen.findByText(/More bands dropping soon\./)).toBeInTheDocument()
+    expect(screen.queryByText(/Set times coming soon\./)).not.toBeInTheDocument()
+  })
+})

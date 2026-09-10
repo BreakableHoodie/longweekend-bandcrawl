@@ -40,7 +40,15 @@ export async function onRequestGet(context) {
     let query = `
       SELECT
         e.*,
-        COUNT(DISTINCT p.band_profile_id) as band_count
+        COUNT(DISTINCT p.band_profile_id) as band_count,
+        -- "Is the schedule out?" -- the state the subscriber notice turns on
+        -- (#1150). A published event whose sets are all announced but none
+        -- placed is the "lineup up, schedule TBA" state; once any set has a
+        -- start_time the news is the schedule rather than the lineup.
+        --
+        -- Counted over performances rather than distinct profiles: a band with
+        -- two sets, one placed, has a schedule that has started appearing.
+        SUM(CASE WHEN p.start_time IS NOT NULL AND p.start_time != '' THEN 1 ELSE 0 END) as scheduled_count
       FROM events e
       LEFT JOIN performances p ON e.id = p.event_id
     `;

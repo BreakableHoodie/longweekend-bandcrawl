@@ -249,6 +249,57 @@ describe("Event API - handler integration", () => {
     expect(data.event.name).toBe("New Name");
   });
 
+  // scheduled_count drives the admin "Notify" button's choice of notice (#1150):
+  // no set placed means the news is the LINEUP; any set placed means it is the
+  // SCHEDULE. It is projected here rather than derived on the client because
+  // the events list carries no per-performance data.
+  it("projects scheduled_count as the number of PLACED sets, not the number of bands", async () => {
+    const db = createTestDB();
+    const env = { DB: createDBEnv(db) };
+    const ev = insertEvent(db, { name: "Vol. 18", slug: "lwbc18", status: "published" });
+
+    // Vol 18's real shape the day this shipped: announced, none placed.
+    const perfA = insertBand(db, { name: "A", event_id: ev.id, start_time: null, end_time: null });
+    insertBand(db, { name: "B", event_id: ev.id, start_time: null, end_time: null });
+
+    const get = async () => {
+      const res = await eventsHandler.onRequestGet({
+        request: new Request("https://example.test/api/admin/events", { headers: { "x-test-role": "viewer" } }),
+        env,
+      });
+      return (await res.json()).events.find((e) => e.id === ev.id);
+    };
+
+    const before = await get();
+    expect(before.band_count).toBe(2);
+    expect(before.scheduled_count).toBe(0);
+
+    // Place ONE of them. The schedule has started appearing, so the notice
+    // becomes the schedule -- a threshold, not a completeness check.
+    db.prepare("UPDATE performances SET start_time = '20:00' WHERE id = ?").run(perfA.id);
+
+    const after = await get();
+    expect(after.scheduled_count).toBe(1);
+  });
+
+  // An empty string is not a time. Guarded because SQLite's NULL handling and a
+  // blank column look identical in the admin UI but differ in SQL, and the
+  // projection's CASE has to reject both.
+  it("does not count an empty-string start_time as placed", async () => {
+    const db = createTestDB();
+    const env = { DB: createDBEnv(db) };
+    const ev = insertEvent(db, { name: "Blank", slug: "blank-times", status: "published" });
+    insertBand(db, { name: "C", event_id: ev.id, start_time: null, end_time: null });
+    db.prepare("UPDATE performances SET start_time = '' WHERE event_id = ?").run(ev.id);
+
+    const res = await eventsHandler.onRequestGet({
+      request: new Request("https://example.test/api/admin/events", { headers: { "x-test-role": "viewer" } }),
+      env,
+    });
+    const found = (await res.json()).events.find((e) => e.id === ev.id);
+    expect(found.scheduled_count).toBe(0);
+  });
+
   // ---------------------------------------------------------------------
   // #569 — events.doors_json create/update wiring, end-to-end through the
   // admin handlers (the validateDoorsJson unit tests in validation.test.js
