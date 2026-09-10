@@ -7,10 +7,11 @@ import { safeExternalHref, safeInstagramHref, safeTikTokHref, safeXHref } from '
 // handle on read -- not a whitelist. So `website`, `youtube` and `bandcamp` are
 // already sent to the client and simply have no entry here.
 //
-// Keeping them out is deliberate. `website` overlaps `ticket_url`, which
-// already renders and which 16 of 20 events have; `youtube` and `bandcamp` are
-// artist-shaped, and the lineup already links per-artist. Facebook earns its
-// place because a Facebook event page is event-shaped infrastructure for a show.
+// Keeping them out is deliberate. `website` duplicates `ticket_url`, which
+// already renders and is the link that actually sells a ticket; `youtube` and
+// `bandcamp` are artist-shaped, and the lineup already links per-artist.
+// Facebook earns its place because a Facebook event page is event-shaped
+// infrastructure for a show.
 //
 // instagram/x/tiktok use handle-aware helpers because rows written before #1132
 // may still hold a bare handle. Facebook has no such legacy -- it was URL-only
