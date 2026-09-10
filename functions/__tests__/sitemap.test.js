@@ -170,7 +170,13 @@ describe("GET /sitemap.xml — event crawl priority (#1158)", () => {
     const live = priorityFor(xml, "https://settimes.ca/event/lwbc18");
     const concluded = priorityFor(xml, "https://settimes.ca/event/lwbc17");
 
+    // Ordering AND the exact values. Ordering alone is too weak: quietly
+    // weakening the upcoming event to 0.9 still satisfies `live > concluded`,
+    // so the signal could be eroded a notch at a time with this test green.
+    // The values are the decision -- an upcoming event ranks with the homepage.
     expect(Number(live.priority)).toBeGreaterThan(Number(concluded.priority));
+    expect(live.priority).toBe("1.0");
+    expect(concluded.priority).toBe("0.5");
     expect(live.changefreq).toBe("daily");
     expect(concluded.changefreq).toBe("monthly");
   });

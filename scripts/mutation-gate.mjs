@@ -91,8 +91,12 @@ export const MUTATIONS = [
     invariant:
       "CLAUDE.md 'The sitemap is the only discovery signal — spend it (#1158)' — an upcoming event outranks a concluded one",
     file: "functions/sitemap.xml.js",
+    // Mutates ONLY the upcoming branch. Flattening both to a single value was
+    // a weaker test: it was caught by the ordering assertion alone, so it never
+    // exercised the case that actually erodes the signal -- quietly demoting
+    // the live event a notch while leaving the concluded one alone.
     find: '<priority>${upcoming ? "1.0" : "0.5"}</priority>',
-    replace: "<priority>0.8</priority>",
+    replace: '<priority>${upcoming ? "0.9" : "0.5"}</priority>',
     tests: ["functions/__tests__/sitemap.test.js"],
   },
   {
@@ -101,7 +105,7 @@ export const MUTATIONS = [
       "CLAUDE.md 'The sitemap is the only discovery signal — spend it (#1158)' — an upcoming event is crawled daily, not weekly",
     file: "functions/sitemap.xml.js",
     find: '<changefreq>${upcoming ? "daily" : "monthly"}</changefreq>',
-    replace: "<changefreq>weekly</changefreq>",
+    replace: '<changefreq>${upcoming ? "weekly" : "monthly"}</changefreq>',
     tests: ["functions/__tests__/sitemap.test.js"],
   },
   {
