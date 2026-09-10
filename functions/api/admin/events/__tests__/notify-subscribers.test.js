@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createTestEnv, insertEvent } from "../../../test-utils.js";
 import * as handler from "../[id]/notify-subscribers.js";
-import { notifySubscribers, pendingSubscribers } from "../../../../utils/subscriberNotify.js";
+import { MAX_PER_INVOCATION, notifySubscribers, pendingSubscribers } from "../../../../utils/subscriberNotify.js";
 
 vi.mock("../../../../utils/email.js", () => ({
   sendEmail: vi.fn(),
@@ -163,6 +163,41 @@ describe("POST /api/admin/events/[id]/notify-subscribers", () => {
     const mail = sendEmail.mock.calls[0][1];
     expect(mail.text).toContain("/api/subscriptions/unsubscribe?token=");
     expect(mail.html).toContain("/api/subscriptions/unsubscribe?token=");
+  });
+
+  it("caps one invocation and reports what is left", async () => {
+    const { env, rawDb, headers } = createTestEnv({ role: "editor" });
+    const ev = insertEvent(rawDb, { name: "Vol. 18", slug: "lwbc18" });
+    publish(rawDb, ev.id);
+    const over = MAX_PER_INVOCATION + 5;
+    for (let i = 0; i < over; i += 1) sub(rawDb, { email: `s${i}@example.com`, verified: 1 });
+
+    const res = await post(env, headers, ev.id, { kind: "schedule_announced" });
+    const body = await res.json();
+
+    // Bounded: each subscriber costs ~3 subrequests, so an unbounded fan-out
+    // over a long list exhausts the Worker's budget mid-send.
+    expect(body.sent).toBe(MAX_PER_INVOCATION);
+    // And the caller is told to come back, with the REAL figure.
+    expect(body.remaining).toBe(5);
+
+    const second = await post(env, headers, ev.id, { kind: "schedule_announced" });
+    expect(await second.json()).toMatchObject({ sent: 5, remaining: 0 });
+  });
+
+  it("reports remaining from a re-query, not the pre-send count", async () => {
+    const { env, rawDb, headers } = createTestEnv({ role: "editor" });
+    const ev = insertEvent(rawDb, { name: "Vol. 18", slug: "lwbc18" });
+    publish(rawDb, ev.id);
+    sub(rawDb, { email: "ok@example.com", verified: 1 });
+    sub(rawDb, { email: "bounces@example.com", verified: 1 });
+
+    sendEmail.mockImplementation(async (_e, { to }) => ({ delivered: to === "ok@example.com" }));
+    const body = await (await post(env, headers, ev.id, { kind: "schedule_announced" })).json();
+
+    // The pre-send count was 2 either way. Only a re-query can say that one
+    // address still needs a retry.
+    expect(body).toMatchObject({ sent: 1, failed: 1, remaining: 1 });
   });
 
   it("refuses an unknown kind rather than mailing under a new key", async () => {

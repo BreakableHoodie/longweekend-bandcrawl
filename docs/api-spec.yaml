@@ -2272,6 +2272,51 @@ paths:
         "500":
           $ref: "#/components/responses/ServerError"
 
+  /api/admin/events/{id}/notify-subscribers:
+    post:
+      tags:
+        - Admin - Events
+      summary: Mail the general subscriber list about this event
+      description: >
+        Sends a one-off notice to every VERIFIED subscriber who has not already
+        received this `kind` for this event. Idempotent: a repeat call mails
+        nobody twice, and after a partial failure it retries only the addresses
+        that did not receive it. Broadcasts to all verified subscribers -- the
+        `city`, `genre` and `frequency` columns on email_subscriptions are not
+        consulted. Capped per invocation; POST again while `remaining` is above
+        zero. The event must be published.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Event id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind:
+                  type: string
+                  enum: [lineup_announced, schedule_announced]
+                  description: Which notice to send. Part of the delivery-tracking key.
+      security:
+        - AdminSessionCookie: []
+          CsrfToken: []
+      responses:
+        "200":
+          description: "Send result: { success, sent, failed, remaining }"
+        "400":
+          description: Invalid event id, body, or unknown kind
+        "403":
+          description: Requires editor role or higher
+        "404":
+          description: No published event with that id
+
   /api/admin/bands/{id}/resend-announcement:
     post:
       tags:
