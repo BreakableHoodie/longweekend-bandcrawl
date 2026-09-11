@@ -41,6 +41,11 @@ describe('the shell ships a crawlable link graph', () => {
     // The regression: someone tidies the shell and the site silently returns to
     // a link graph that needs JS.
     expect(shellHrefs.length).toBeGreaterThanOrEqual(5)
+
+    // Uniqueness is what makes that count mean anything -- five copies of one
+    // href would satisfy it while linking a single page. A duplicate is also a
+    // wasted signal: it points crawlers at somewhere they already have.
+    expect(new Set(shellHrefs).size).toBe(shellHrefs.length)
   })
 
   test('the scan can actually find routes, so the check below is not vacuous', () => {
