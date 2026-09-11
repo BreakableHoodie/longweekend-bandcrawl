@@ -508,6 +508,49 @@ Mocked unit tests prove the handler *builds* correct HTML; they cannot prove Clo
 
 ---
 
+### The sitemap is the only discovery signal — spend it (#1158)
+
+**No page on this site emits a single crawlable `<a>`.** Verified 2026-09-10
+against production: `/`, `/events`, `/artists`, `/event/*` and `/band/*` all
+return **zero** anchors in raw HTML, because `serveWithInjectedMeta()` injects
+into `<head>` only and the `<body>` stays an empty `#root`. Googlebot renders
+JS, so pages *do* get indexed — but every link-derived signal is absent, and
+Search Console confirms it: an indexed page's sole `referring_urls` entry is
+`https://settimes.ca/sitemap.xml`.
+
+So `functions/sitemap.xml.js` is not one signal among many. It is the only one.
+
+Which is why events are no longer emitted at a flat `weekly` / `0.8`. That rate
+made the live edition indistinguishable from four archived ones — twenty URLs
+sharing a priority — and `/event/lwbc18` sat `Discovered - currently not
+indexed`, `last_crawled: null`, **31 days before the event**, while an older
+recap page was indexed fine.
+
+| event state | priority | changefreq |
+|---|---|---|
+| published, upcoming | `1.0` | `daily` |
+| concluded / archived | `0.5` | `monthly` |
+
+Three things not to undo:
+
+- **`changefreq` matters as much as `priority`.** An upcoming event's lineup and
+  set times change daily; `weekly` told Google to check back less often than
+  reality warrants.
+- **A concluded event's `0.5` sits just under its own recap page's `0.6`, on
+  purpose.** Once an edition is over, the recap — with its per-event stats — is
+  the better answer than the schedule page.
+- **`is_concluded` comes from the shared SQL predicate** (`concludedEventSql()`),
+  not a local date compare, so this cannot drift from the recap API or the recap
+  SSR route. That drift is exactly what #787 fixed.
+
+The tests assert the two states **differ**, not that each has some value — a
+test that only checked "the URL is present" passed with the priorities
+identical, which is how the flat rate survived this long. Both halves are in the
+mutation gate.
+
+**The deeper gap is still open: #1159**, the missing server-rendered link graph.
+Fixing the sitemap spends the one lever available; it does not create the others.
+
 ## Theming
 
 Four user-selectable colour themes, set as `data-theme` on `<html>` by `frontend/src/components/ThemeProvider.jsx` and persisted in localStorage: `midnight-ember` (warm dark, default), `arctic-night` (cool dark), `daybreak` (warm light), `silver-lining` (cool light). All theme colours are CSS custom properties defined per `[data-theme]` block in `frontend/src/index.css`, exposed as Tailwind v4 utilities via `@theme`.

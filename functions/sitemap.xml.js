@@ -112,11 +112,40 @@ export async function onRequestGet(context) {
     // here. It now rides on `is_concluded` from the shared SQL predicate (#787)
     // so this file cannot drift from the recap API and SSR route again.
     for (const event of events) {
+      // Lifecycle, not a flat rate (#1158). Every event used to emit the same
+      // `weekly` / `0.8`, so the live edition was indistinguishable from four
+      // archived ones -- twenty URLs sharing a priority, nothing saying which
+      // page matters this month. Measured 2026-09-10: /event/lwbc18 was
+      // `Discovered - currently not indexed` with `last_crawled: null`, 31 days
+      // before the event, while an older recap page was indexed fine. The
+      // sitemap is the ONLY signal Google has here -- that recap's sole
+      // referring URL is this file's output -- so a flat rate wastes the one
+      // lever available.
+      //
+      // `changefreq` carries as much weight as `priority`: an upcoming event's
+      // lineup and set times change daily, and `weekly` told Google to check
+      // back less often than reality warrants.
+      //
+      // `is_concluded` comes from the shared SQL predicate above, so this
+      // cannot drift from the recap API or the recap SSR route.
+      //
+      // A concluded event lands at 0.5, just under its own recap page's 0.6.
+      // That ordering is deliberate: once an edition is over, the recap -- with
+      // its per-event stats -- is the better answer than the schedule page.
+      //
+      // `is_concluded` alone is sufficient and no status check is needed here.
+      // `concludedEventSql()` is NOT merely a date comparison -- it is
+      // `archived OR (published AND date past)` -- so an event ARCHIVED while
+      // its date is still in the future already comes back concluded. A review
+      // pass claimed otherwise and asked for a status gate; adding one was
+      // redundant, and the test below proves the behaviour was already right by
+      // passing with it removed.
+      const upcoming = !event.is_concluded;
       rows.push(`  <url>
     <loc>https://settimes.ca/event/${event.slug}</loc>
     <lastmod>${event.last_modified.slice(0, 10)}</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
+    <changefreq>${upcoming ? "daily" : "monthly"}</changefreq>
+    <priority>${upcoming ? "1.0" : "0.5"}</priority>
   </url>`);
       // Past editions also get their recap page (#555) — a content-rich page
       // that was previously reachable only by typing the URL. Recaps only

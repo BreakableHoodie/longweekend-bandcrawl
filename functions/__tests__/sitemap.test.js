@@ -138,3 +138,111 @@ describe("GET /sitemap.xml — lastmod reflects CONTENT changes, not the event d
     expect(xml).not.toContain("<lastmod></lastmod>");
   });
 });
+
+/**
+ * Crawl-priority signals (#1158).
+ *
+ * Every event used to emit the same `weekly` / `0.8`, so the live edition was
+ * indistinguishable from archived ones and the sitemap -- the only discovery
+ * signal this site has -- said nothing about which page matters now.
+ *
+ * These assert the two states DIFFER, not just that each has some value. A test
+ * that only checked "the URL is present" passed with the priorities identical,
+ * which is exactly how the flat rate survived this long.
+ */
+describe("GET /sitemap.xml — event crawl priority (#1158)", () => {
+  const priorityFor = (xml, loc) => {
+    const block = xml.split("<url>").find((chunk) => chunk.includes(`<loc>${loc}</loc>`));
+    return {
+      priority: block?.match(/<priority>([^<]+)<\/priority>/)?.[1],
+      changefreq: block?.match(/<changefreq>([^<]+)<\/changefreq>/)?.[1],
+    };
+  };
+
+  test("an upcoming event outranks a concluded one, on both signals", async () => {
+    const { env, rawDb } = createTestEnv();
+    const upcoming = insertEvent(rawDb, { name: "Vol 18", slug: "lwbc18", date: "2099-01-01" });
+    const past = insertEvent(rawDb, { name: "Vol 17", slug: "lwbc17", date: "2020-01-01" });
+    publish(rawDb, upcoming.id);
+    publish(rawDb, past.id);
+
+    const xml = await fetchSitemap(env);
+    const live = priorityFor(xml, "https://settimes.ca/event/lwbc18");
+    const concluded = priorityFor(xml, "https://settimes.ca/event/lwbc17");
+
+    // Ordering AND the exact values. Ordering alone is too weak: quietly
+    // weakening the upcoming event to 0.9 still satisfies `live > concluded`,
+    // so the signal could be eroded a notch at a time with this test green.
+    // The values are the decision -- an upcoming event ranks with the homepage.
+    expect(Number(live.priority)).toBeGreaterThan(Number(concluded.priority));
+    expect(live.priority).toBe("1.0");
+    expect(concluded.priority).toBe("0.5");
+    expect(live.changefreq).toBe("daily");
+    expect(concluded.changefreq).toBe("monthly");
+  });
+
+  test("the upcoming event is the top-priority event URL in the whole document", async () => {
+    // The point is not the literal 1.0 -- it is that nothing else this file
+    // emits for an event tells Google to prefer an archived edition over the
+    // one that has not happened yet.
+    const { env, rawDb } = createTestEnv();
+    const upcoming = insertEvent(rawDb, { name: "Vol 18", slug: "lwbc18", date: "2099-01-01" });
+    for (const [slug, date] of [
+      ["lwbc17", "2020-01-01"],
+      ["buddiesfest2", "2019-06-01"],
+    ]) {
+      const ev = insertEvent(rawDb, { name: slug, slug, date });
+      publish(rawDb, ev.id);
+    }
+    publish(rawDb, upcoming.id);
+
+    const xml = await fetchSitemap(env);
+    const live = Number(priorityFor(xml, "https://settimes.ca/event/lwbc18").priority);
+    for (const slug of ["lwbc17", "buddiesfest2"]) {
+      expect(live).toBeGreaterThan(Number(priorityFor(xml, `https://settimes.ca/event/${slug}`).priority));
+    }
+  });
+
+  test("an ARCHIVED event with a future date is not advertised as upcoming", async () => {
+    // Guards a property that already holds, which is the point: it would be
+    // easy to "simplify" concludedEventSql() into a plain date comparison, and
+    // this event -- archived, but dated in the future -- is what that breaks.
+    // It would then be advertised to Google at 1.0/daily as the live edition,
+    // after it is over.
+    //
+    // The combination is real, not theoretical: CLAUDE.md records an event
+    // archived on its own final day still passing a date filter, which is why
+    // /api/schedule?event=current uses the narrower published gate. The
+    // timeline draws the same line, bucketing past as
+    // `archived OR (published AND concluded by date)` -- and concludedEventSql
+    // encodes exactly that, which is why no status check is needed at the call
+    // site.
+    const { env, rawDb } = createTestEnv();
+    const live = insertEvent(rawDb, { name: "Vol 18", slug: "lwbc18", date: "2099-01-01" });
+    const archivedFuture = insertEvent(rawDb, { name: "Called Off", slug: "called-off", date: "2099-06-01" });
+    publish(rawDb, live.id);
+    rawDb.prepare("UPDATE events SET status = 'archived' WHERE id = ?").run(archivedFuture.id);
+
+    const xml = await fetchSitemap(env);
+    const archived = priorityFor(xml, "https://settimes.ca/event/called-off");
+
+    expect(archived.changefreq).toBe("monthly");
+    expect(Number(archived.priority)).toBeLessThan(
+      Number(priorityFor(xml, "https://settimes.ca/event/lwbc18").priority),
+    );
+  });
+
+  test("a concluded event ranks below its own recap page", async () => {
+    // Deliberate: once an edition is over the recap, with its per-event stats,
+    // is the better answer than the schedule page.
+    const { env, rawDb } = createTestEnv();
+    const past = insertEvent(rawDb, { name: "Vol 17", slug: "lwbc17", date: "2020-01-01" });
+    publish(rawDb, past.id);
+
+    const xml = await fetchSitemap(env);
+    const eventPage = Number(priorityFor(xml, "https://settimes.ca/event/lwbc17").priority);
+    const recap = Number(priorityFor(xml, "https://settimes.ca/events/lwbc17/recap").priority);
+
+    expect(recap).toBeGreaterThan(eventPage);
+  });
+});
