@@ -510,15 +510,37 @@ Mocked unit tests prove the handler *builds* correct HTML; they cannot prove Clo
 
 ### The sitemap is the only discovery signal — spend it (#1158)
 
-**No page on this site emits a single crawlable `<a>`.** Verified 2026-09-10
-against production: `/`, `/events`, `/artists`, `/event/*` and `/band/*` all
-return **zero** anchors in raw HTML, because `serveWithInjectedMeta()` injects
-into `<head>` only and the `<body>` stays an empty `#root`. Googlebot renders
-JS, so pages *do* get indexed — but every link-derived signal is absent, and
-Search Console confirms it: an indexed page's sole `referring_urls` entry is
-`https://settimes.ca/sitemap.xml`.
+**Until #1159, no page on this site emitted a single crawlable `<a>`.** Verified
+2026-09-10 against production: `/`, `/events`, `/artists`, `/event/*` and
+`/band/*` all returned **zero** anchors in raw HTML, because
+`serveWithInjectedMeta()` injects into `<head>` only and the `<body>` stays an
+empty `#root`. Googlebot renders JS, so pages *did* get indexed — but every
+link-derived signal was absent, and Search Console confirmed it: an indexed
+page's sole `referring_urls` entry was `https://settimes.ca/sitemap.xml`.
 
-So `functions/sitemap.xml.js` is not one signal among many. It is the only one.
+`frontend/index.html` now ships a `<noscript>` nav covering the static,
+parameterless routes, so every page carries a link graph in raw HTML. Three
+things about it are load-bearing:
+
+- **`<noscript>`, not a plain element.** React only replaces `#root`, so markup
+  placed beside it renders *alongside* the app's own nav for every JS visitor.
+  The links are still parsed in the raw-HTML pass, and a scripting-off visitor
+  gets real navigation instead of a blank page.
+- **Every href must be a real `<Route path>` in `main.jsx`.** `/events` is the
+  trap — it reads like the event list but is **not** a route; the list lives at
+  `/`. `frontend/src/__tests__/crawlableLinks.test.js` enforces this, because
+  linking a 404 spends a discovery signal on a dead end.
+- **Only parameterless routes.** A static shell cannot know a slug.
+
+**The event-specific link is still missing, and it is the valuable one.** The
+homepage cannot link the current edition without a Pages Function for `/`, and
+`/` is deliberately excluded from `_routes.json` (see the SSR ownership section
+— `index.html`'s defaults *are* the homepage's correct meta). So the sitemap
+remains the only thing telling Google which *event* matters; the nav only
+establishes the site's spine.
+
+So `functions/sitemap.xml.js` is still the primary signal, and the only one that
+speaks about events.
 
 Which is why events are no longer emitted at a flat `weekly` / `0.8`. That rate
 made the live edition indistinguishable from four archived ones — twenty URLs
