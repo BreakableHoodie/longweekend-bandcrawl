@@ -508,7 +508,7 @@ Mocked unit tests prove the handler *builds* correct HTML; they cannot prove Clo
 
 ---
 
-### The sitemap is the only discovery signal — spend it (#1158)
+### The sitemap is the event-discovery signal — spend it (#1158)
 
 **Until #1159, no page on this site emitted a single crawlable `<a>`.** Verified
 2026-09-10 against production: `/`, `/events`, `/artists`, `/event/*` and
@@ -570,8 +570,12 @@ test that only checked "the URL is present" passed with the priorities
 identical, which is how the flat rate survived this long. Both halves are in the
 mutation gate.
 
-**The deeper gap is still open: #1159**, the missing server-rendered link graph.
-Fixing the sitemap spends the one lever available; it does not create the others.
+**#1159 narrowed this, it did not close it.** The shell now carries a crawlable
+nav, so the site has a link *spine* — but a static shell cannot know a slug, so
+nothing links the current edition. The sitemap is still the only thing that
+speaks about **events**, which is why its priorities are worth this much
+attention. **#1163** tracks the homepage link that would change that, and it is
+gated on giving `/` a Pages Function without disturbing its meta ownership.
 
 ## Theming
 

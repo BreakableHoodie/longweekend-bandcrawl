@@ -89,7 +89,7 @@ export const MUTATIONS = [
   {
     id: "sitemap-upcoming-event-priority",
     invariant:
-      "CLAUDE.md 'The sitemap is the only discovery signal — spend it (#1158)' — an upcoming event outranks a concluded one",
+      "CLAUDE.md 'The sitemap is the event-discovery signal — spend it (#1158)' — an upcoming event outranks a concluded one",
     file: "functions/sitemap.xml.js",
     // Mutates ONLY the upcoming branch. Flattening both to a single value was
     // a weaker test: it was caught by the ordering assertion alone, so it never
@@ -102,7 +102,7 @@ export const MUTATIONS = [
   {
     id: "sitemap-upcoming-event-changefreq",
     invariant:
-      "CLAUDE.md 'The sitemap is the only discovery signal — spend it (#1158)' — an upcoming event is crawled daily, not weekly",
+      "CLAUDE.md 'The sitemap is the event-discovery signal — spend it (#1158)' — an upcoming event is crawled daily, not weekly",
     file: "functions/sitemap.xml.js",
     find: '<changefreq>${upcoming ? "daily" : "monthly"}</changefreq>',
     replace: '<changefreq>${upcoming ? "weekly" : "monthly"}</changefreq>',
