@@ -214,3 +214,33 @@ describe("staticPageMeta — /events/*/recap is exempt from the static registry 
     expect(typeof mod.onRequestGet).toBe("function");
   });
 });
+
+// The crawlable link graph must survive SSR injection (#1159).
+//
+// serveWithInjectedMeta strips DEFAULT_META_RE, swaps the <title> and injects
+// before </head> -- all head-scoped, so the body should be untouched. "Should
+// be" is the part worth testing: DEFAULT_META_RE runs against the WHOLE
+// document, and the injected routes are the pages whose link signals matter
+// most. If the body were ever disturbed, the site would silently return to a
+// link graph that needs JS on exactly those pages.
+//
+// This reads the real frontend/index.html, so it fails if the nav is removed
+// from the shell as well as if injection eats it.
+describe("SSR injection preserves the shell's crawlable links", () => {
+  for (const pagePath of Object.keys(STATIC_PAGES)) {
+    it(`${pagePath} still serves the shell's anchors after meta injection`, async () => {
+      const shellHrefs = [...DEFAULT_HTML.matchAll(/<a\s[^>]*href="([^"]+)"/g)].map((m) => m[1]);
+      // Positive control: if the shell ever ships without links, this test must
+      // fail loudly rather than assert nothing.
+      expect(shellHrefs.length).toBeGreaterThanOrEqual(5);
+
+      const res = await staticPageHandler(pagePath)(makeContext(`${CANONICAL_HOST}${pagePath}`));
+      const html = await res.text();
+
+      for (const href of shellHrefs) {
+        expect(html, `${pagePath} lost the ${href} link`).toContain(`href="${href}"`);
+      }
+      expect(html).toContain("<noscript>");
+    });
+  }
+});

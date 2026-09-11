@@ -59,6 +59,44 @@
   </head>
   <body>
     <div id="root"></div>
+
+    <!--
+      A crawlable link graph, and the no-JS entry point (#1159).
+
+      Measured 2026-09-10: every public route returned ZERO <a> tags in raw
+      HTML. serveWithInjectedMeta() injects into <head> only, so the body stays
+      an empty #root until JS runs. Pages still got indexed -- Googlebot
+      renders -- but every link-derived signal was absent, and Search Console
+      confirmed it: an indexed page's sole referring URL was sitemap.xml. The
+      sitemap was the entire discovery channel for the site.
+
+      Inside <noscript> on purpose. These links are parsed in the raw-HTML pass
+      before any render, so they are discovered exactly when link signals are
+      cheapest -- and they never duplicate the app's own nav for a JS visitor,
+      which a plain <div> here would, since React only replaces #root.
+
+      It also stops being a dead end without JS: someone with scripting off now
+      gets real navigation rather than a blank page.
+
+      Only static, parameterless routes belong here. Every href must be a real
+      <Route path> in src/main.jsx -- note /events is NOT one, the event list
+      lives at /. A guard test enforces that; see
+      src/__tests__/crawlableLinks.test.js.
+    -->
+    <noscript>
+      <nav aria-label="Site">
+        <ul>
+          <li><a href="/">Upcoming shows</a></li>
+          <li><a href="/artists">Artists</a></li>
+          <li><a href="/venues">Venues</a></li>
+          <li><a href="/stats">Stats</a></li>
+          <li><a href="/subscribe">Get show announcements</a></li>
+          <li><a href="/about">About</a></li>
+          <li><a href="/contact">Contact</a></li>
+        </ul>
+      </nav>
+    </noscript>
+
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
